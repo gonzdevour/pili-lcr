@@ -1,0 +1,39 @@
+﻿{
+	"id": "com.iegoart.lcr",
+	"version": "1.0.8",
+	"name": "還真30",
+	"description": "JSS_Cordova",
+	"author": "playone",
+	"email": "",
+	"website": "",
+	"fullscreen": "false",
+	"useragent": null,
+	"orientation": "portrait",
+	"icons": [{
+		"src": "www/icon-256.png",
+		"width": 256,
+		"height": 256,
+		"density": "xxxhdpi"
+	}, {
+		"src": "www/icon-128.png",
+		"width": 128,
+		"height": 128,
+		"density": "xhdpi"
+	}],
+	"plugins": [
+		{ "id": "cordova-plugin-camera", "version": null },
+		{ "id": "cordova-plugin-inappbrowser", "version": null },
+		{ "id": "cordova-plugin-media", "version": null },
+		{ "id": "cordova-plugin-vibration", "version": null },
+		{ "id": "cordova-plugin-whitelist", "version": null }
+	],
+	"android": {
+		"min": 21,
+		"target": 26,
+		"plugins": []
+	},
+	"ios": {
+		"target": "8.0",
+		"plugins": []
+	}
+}
