@@ -17359,6 +17359,199 @@ cr.plugins_.Rex_Nickname = function (runtime) {
 }());
 ;
 ;
+cr.plugins_.Rex_TimeAway = function(runtime)
+{
+	this.runtime = runtime;
+};
+(function ()
+{
+	var pluginProto = cr.plugins_.Rex_TimeAway.prototype;
+	pluginProto.Type = function(plugin)
+	{
+		this.plugin = plugin;
+		this.runtime = plugin.runtime;
+	};
+	var typeProto = pluginProto.Type.prototype;
+	typeProto.onCreate = function()
+	{
+	};
+	pluginProto.Instance = function(type)
+	{
+		this.type = type;
+		this.runtime = type.runtime;
+	};
+	var instanceProto = pluginProto.Instance.prototype;
+	instanceProto.onCreate = function()
+	{
+        this._webstorage_obj = null;
+        this._save_fn = null;
+        this._load_fn = null;
+        this._remove_fn = null;
+	    this.fake_ret = {value:0,
+	                     set_any: function(value){this.value=value;},
+	                     set_int: function(value){this.value=value;},
+                         set_float: function(value){this.value=value;},
+                         set_string: function(value){this.value=value;},
+	                    };
+        this.exp_ElapsedDays = (-1);
+	};
+	instanceProto.webstorage_get = function ()
+	{
+        if (this._webstorage_obj != null)
+            return this._webstorage_obj;
+;
+        var plugins = this.runtime.types;
+        this._save_fn = cr.plugins_.WebStorage.prototype.acts.StoreLocal;
+        this._load_fn = cr.plugins_.WebStorage.prototype.exps.LocalValue;
+        this._remove_fn = cr.plugins_.WebStorage.prototype.acts.RemoveLocal;
+        var name, plugin;
+        for (name in plugins)
+        {
+            plugin = plugins[name];
+            if (plugin.plugin.acts.StoreLocal == this._save_fn)
+            {
+                this._webstorage_obj = plugin.instances[0];
+                break;
+            }
+        }
+        return this._webstorage_obj;
+	};
+    instanceProto.load_value = function (key)
+    {
+        var webstorage_obj = this.webstorage_get();
+        this._load_fn.call(webstorage_obj, this.fake_ret, key);
+        return parseInt(this.fake_ret.value);
+    };
+    instanceProto.save_value = function (key, value)
+    {
+        var webstorage_obj = this.webstorage_get();
+        this._save_fn.call(webstorage_obj, key, value);
+    };
+    instanceProto.remove_value = function (key)
+    {
+        var webstorage_obj = this.webstorage_get();
+        this._remove_fn.call(webstorage_obj, key);
+    };
+	function Cnds() {};
+	pluginProto.cnds = new Cnds();
+	function Acts() {};
+	pluginProto.acts = new Acts();
+	Acts.prototype.StartTimer = function (key)
+	{
+        var today = new Date();
+        var nowtime = today.getTime();
+        this.save_value(key, nowtime);
+	};
+	Acts.prototype.RemoveTimer = function (key)
+	{
+        this.remove_value(key);
+	};
+	function Exps() {};
+	pluginProto.exps = new Exps();
+	Exps.prototype.ElapsedTime = function (ret, key)
+	{
+        var save_time = this.load_value(key);
+        var today = new Date();
+        var nowtime = today.getTime();
+        var delta = (isNaN(save_time))? 0 : (nowtime - save_time);
+        ret.set_float(delta/1000);
+	};
+}());
+;
+;
+cr.plugins_.Rex_WebstorageExt = function(runtime)
+{
+	this.runtime = runtime;
+};
+(function ()
+{
+	var pluginProto = cr.plugins_.Rex_WebstorageExt.prototype;
+	pluginProto.Type = function(plugin)
+	{
+		this.plugin = plugin;
+		this.runtime = plugin.runtime;
+	};
+	var typeProto = pluginProto.Type.prototype;
+	typeProto.onCreate = function()
+	{
+	};
+	pluginProto.Instance = function(type)
+	{
+		this.type = type;
+		this.runtime = type.runtime;
+	};
+	var instanceProto = pluginProto.Instance.prototype;
+	instanceProto.onCreate = function()
+	{
+        this._webstorage_obj = null;
+	    this.fake_ret = {value:0,
+	                     set_any: function(value){this.value=value;},
+	                     set_int: function(value){this.value=value;},
+                         set_float: function(value){this.value=value;},
+                         set_string: function(value){this.value=value;},
+	                    };
+	};
+	instanceProto.onDestroy = function ()
+	{
+	};
+	instanceProto.webstorage_get = function ()
+	{
+        if (this._webstorage_obj != null)
+            return this._webstorage_obj;
+;
+        var plugins = this.runtime.types;
+        this._key_exist_fn = cr.plugins_.WebStorage.prototype.cnds.LocalStorageExists;
+        var name, plugin;
+        for (name in plugins)
+        {
+            plugin = plugins[name];
+            if (plugin.plugin.acts.StoreLocal == this._save_fn)
+            {
+                this._webstorage_obj = plugin.instances[0];
+                break;
+            }
+        }
+        return this._webstorage_obj;
+	};
+    instanceProto.load_value = function (key)
+    {
+        var webstorage_obj = this.webstorage_get();
+        cr.plugins_.WebStorage.prototype.exps.LocalValue.call(webstorage_obj, this.fake_ret, key);
+        return this.fake_ret.value;
+    };
+    instanceProto.save_value = function (key, value)
+    {
+        var webstorage_obj = this.webstorage_get();
+        cr.plugins_.WebStorage.prototype.acts.StoreLocal.call(webstorage_obj, key, value);
+    };
+    instanceProto.key_exist = function (key)
+    {
+        var webstorage_obj = this.webstorage_get();
+        return cr.plugins_.WebStorage.prototype.cnds.LocalStorageExists.call(webstorage_obj, key);
+    };
+	function Cnds() {};
+	pluginProto.cnds = new Cnds();
+	function Acts() {};
+	pluginProto.acts = new Acts();
+	function Exps() {};
+	pluginProto.exps = new Exps();
+    Exps.prototype.LocalValue = function (ret, _key, _default)
+	{
+	    var v;
+	    if (this.key_exist(_key))
+	    {
+	        v = this.load_value(_key);
+	    }
+	    else
+	    {
+	        v = _default;
+	        this.save_value(_key, v);
+	    }
+	    ret.set_any( v );
+	};
+}());
+;
+;
 cr.plugins_.Rex_canvas = function(runtime)
 {
 	this.runtime = runtime;
@@ -18520,6 +18713,687 @@ cr.plugins_.Rex_jsshell = function (runtime) {
     StackKlassProto.pop = function () {
 ;
         this.ptr--;
+    };
+}());
+;
+;
+cr.plugins_.Rex_taffydb = function (runtime) {
+    this.runtime = runtime;
+};
+cr.plugins_.Rex_taffydb.databases = {}; // {db: database, ownerUID: uid }
+(function () {
+    var pluginProto = cr.plugins_.Rex_taffydb.prototype;
+    pluginProto.Type = function (plugin) {
+        this.plugin = plugin;
+        this.runtime = plugin.runtime;
+    };
+    var typeProto = pluginProto.Type.prototype;
+    typeProto.onCreate = function () {};
+    pluginProto.Instance = function (type) {
+        this.type = type;
+        this.runtime = type.runtime;
+    };
+    var instanceProto = pluginProto.Instance.prototype;
+    instanceProto.onCreate = function () {
+        this.db_name = null;
+        this.LinkToDatabase(this.properties[0]);
+        var index_keys_input = this.properties[1];
+        if (index_keys_input === "") {
+            if (!this.recycled)
+                this.indexKeys = [];
+            else
+                this.indexKeys.length = 0;
+        } else {
+            this.indexKeys = index_keys_input.split(",");
+        }
+        this.keyType = {}; // 0=string, 1=number, 2=eval
+        this.rowID = "";
+        this.preparedItem = {};
+        if (!this.recycled)
+            this.preprocessCmd = {};
+        this.preprocessCmd["inc"] = {};
+        this.preprocessCmd["max"] = {};
+        this.preprocessCmd["min"] = {};
+        this.hasPreprocessCmd = false;
+        this.CleanFilters();
+        this.query_base = null;
+        this.query_flag = false;
+        this.current_rows = null;
+        this.filter_history = {
+            "flt": {},
+            "ord": ""
+        };
+        this.queriedRows = null;
+        this.exp_CurRowID = "";
+        this.exp_CurRowIndex = -1;
+        this.exp_LastSavedRowID = "";
+        this.__flthis_save = null;
+    };
+    instanceProto.LinkToDatabase = function (name) {
+        if (this.db_name === name)
+            return;
+        else if (this.db_name === "") {
+            this.db()["remove"]();
+        }
+        this.db_name = name;
+        if (name === "") // private database
+        {
+            this.db = window["TAFFY"]();
+        } else // public database
+        {
+            create_global_database(this.uid, name);
+            this.db = get_global_database_reference(name).db;
+        }
+    };
+    var create_global_database = function (ownerUID, db_name, db_content) {
+        if (cr.plugins_.Rex_taffydb.databases.hasOwnProperty(db_name))
+            return;
+        var db_ref = {
+            db: window["TAFFY"](db_content),
+            ownerID: ownerUID
+        };
+        cr.plugins_.Rex_taffydb.databases[db_name] = db_ref;
+    };
+    var get_global_database_reference = function (db_name) {
+        return cr.plugins_.Rex_taffydb.databases[db_name];
+    };
+    instanceProto.onDestroy = function () {
+        this.indexKeys.length = 0;
+        clean_table(this.preparedItem);
+        clean_table(this.filters);
+        this.order_cond.length = 0;
+        if (this.db_name === "")
+            this.db()["remove"]();
+        else {
+            var database_ref = get_global_database_reference(this.db_name);
+            if (database_ref.ownerUID === this.uid)
+                database_ref.ownerUID = null;
+        }
+        this.preprocessCmd["inc"] = {};
+        this.preprocessCmd["max"] = {};
+        this.preprocessCmd["min"] = {};
+    };
+    instanceProto.SaveRow = function (row, indexKeys, rowID, preprocessCmd) {
+        var invalid_rowID = (rowID == null) || (rowID === "");
+        if (!invalid_rowID) {
+            var items = this.db(rowID);
+            var itemOld = items["first"]();
+            if (itemOld) {
+                row = this.buildUpdateItem(itemOld, row, preprocessCmd);
+                items["update"](row);
+            }
+        }
+        else if ((indexKeys == null) || (indexKeys.length === 0)) {
+            row = this.buildUpdateItem(null, row, preprocessCmd);
+            this.db["insert"](row);
+        }
+        else {
+            var queryKeys = {},
+                keyName;
+            var i, cnt = this.indexKeys.length;
+            for (i = 0; i < cnt; i++) {
+                keyName = this.indexKeys[i];
+                if (row.hasOwnProperty(keyName)) {
+                    queryKeys[keyName] = row[keyName];
+                }
+            }
+            if (!is_empty(queryKeys)) {
+                var items = this.db(queryKeys);
+                var itemOld = items["first"]() || null;
+                row = this.buildUpdateItem(itemOld, row, preprocessCmd);
+                if (itemOld)
+                    items["update"](row);
+                else
+                    this.db["insert"](row);
+            }
+            else {
+                row = this.buildUpdateItem(null, row, preprocessCmd);
+                this.db["insert"](row);
+            }
+        }
+        if (row["___id"])
+            this.exp_LastSavedRowID = row["___id"];
+    };
+    instanceProto.buildUpdateItem = function (itemOld, preparedItem, preprocessCmd) {
+        if (!this.hasPreprocessCmd || (preprocessCmd == null))
+            return preparedItem;
+        var keys = preprocessCmd["inc"];
+        for (var k in keys) {
+            preparedItem[k] = getItemValue(itemOld, k, 0) + keys[k];
+            delete keys[k];
+        }
+        var keys = preprocessCmd["max"];
+        for (var k in keys) {
+            preparedItem[k] = Math.max(getItemValue(itemOld, k, 0), keys[k]);
+            delete keys[k];
+        }
+        var keys = preprocessCmd["min"];
+        for (var k in keys) {
+            preparedItem[k] = Math.min(getItemValue(itemOld, k, 0), keys[k]);
+            delete keys[k];
+        }
+        this.hasPreprocessCmd = false;
+        return preparedItem;
+    };
+    instanceProto.CleanFilters = function () {
+        this.filters = {};
+        if (this.order_cond == null)
+            this.order_cond = [];
+        this.order_cond.length = 0;
+    };
+    var isEmptyTable = function (o) {
+        for (var k in o)
+            return false;
+        return true;
+    }
+    instanceProto.NewFilters = function () {
+        this.query_base = null;
+        this.CleanFilters();
+        this.query_flag = true;
+    };
+    var COMPARE_TYPES = ["is", "!is", "gt", "lt", "gte", "lte"];
+    instanceProto.AddValueComparsion = function (k, cmp, v) {
+        if (!this.filters.hasOwnProperty(k))
+            this.filters[k] = {};
+        this.filters[k][COMPARE_TYPES[cmp]] = v;
+        this.query_flag = true;
+    };
+    instanceProto.AddValueInclude = function (k, v) {
+        if (!this.filters.hasOwnProperty(k))
+            this.filters[k] = [];
+        this.filters[k].push(v);
+        this.query_flag = true;
+    };
+    instanceProto.AddRegexTest = function (k, s, f) {
+        if (!this.filters.hasOwnProperty(k))
+            this.filters[k] = {};
+        this.filters[k]["regex"] = [s, f];
+        this.query_flag = true;
+    };
+    var ORDER_TYPES = ["desc", "asec", "logicaldesc", "logical"];
+    instanceProto.AddOrder = function (k, order_) {
+        this.order_cond.push(k + " " + ORDER_TYPES[order_]);
+        this.query_flag = true;
+    };
+    var process_filters = function (filters) {
+        for (var k in filters) {
+            if (filters[k].hasOwnProperty("regex")) {
+                var regex = filters[k]["regex"];
+                filters[k]["regex"] = new RegExp(regex[0], regex[1]);
+            }
+        }
+        return filters;
+    };
+    instanceProto.GetQueryResult = function () {
+        if (this.query_base == null) {
+            this.query_base = this.db();
+            this.filter_history["flt"] = {};
+            this.filter_history["ord"] = "";
+        }
+        var query_result = this.query_base;
+        if (!isEmptyTable(this.filters)) {
+            var filter_copy = JSON.parse(JSON.stringify(this.filters));
+            var filters = process_filters(this.filters);
+            query_result = query_result["filter"](filters);
+            for (var k in filter_copy)
+                this.filter_history["flt"][k] = filter_copy[k];
+        }
+        if (this.order_cond.length > 0) {
+            var ord = this.order_cond.join(", ");
+            this.filter_history["ord"] = ord;
+            query_result = query_result["order"](ord);
+        }
+        this.query_base = query_result;
+        this.CleanFilters();
+        return query_result;
+    };
+    instanceProto.GetCurrentQueriedRows = function () {
+        if (!this.queriedRows || this.query_flag) {
+            this.queriedRows = this.GetQueryResult();
+            this.query_flag = false;
+        }
+        return this.queriedRows;
+    };
+    instanceProto.Index2QueriedRowID = function (index_, default_value) {
+        var queriedRows = this.GetCurrentQueriedRows();
+        var row = queriedRows["get"]()[index_];
+        return getItemValue(row, "___id", default_value);
+    };
+    var getEvalValue = function (v, prefix) {
+        if (v == null)
+            v = 0;
+        else {
+            try {
+                v = eval("(" + v + ")");
+            } catch (e) {
+                if (prefix == null)
+                    prefix = "";
+                console.error("TaffyDB: Eval " + prefix + " : " + v + " failed");
+                v = 0;
+            }
+        }
+        return v;
+    };
+    var clean_table = function (o) {
+        for (var k in o)
+            delete o[k];
+    };
+    var is_empty = function (o) {
+        for (var k in o)
+            return false;
+        return true;
+    };
+    var getValue = function (keys, root) {
+        if ((keys == null) || (keys === "") || (keys.length === 0)) {
+            return root;
+        } else if (typeof (root) != 'object') {
+            return root;
+        } else {
+            if (typeof (keys) === "string")
+                keys = keys.split(".");
+            var i, cnt = keys.length,
+                key;
+            var entry = root;
+            for (i = 0; i < cnt; i++) {
+                key = keys[i];
+                if (entry.hasOwnProperty(key))
+                    entry = entry[key];
+                else
+                    return;
+            }
+            return entry;
+        }
+    };
+    var getItemValue = function (item, k, default_value) {
+        return din(getValue(k, item), default_value);
+    };
+    var din = function (d, default_value) {
+        var o;
+        if (d === true)
+            o = 1;
+        else if (d === false)
+            o = 0;
+        else if (d == null) {
+            if (default_value != null)
+                o = default_value;
+            else
+                o = 0;
+        } else if (typeof (d) == "object")
+            o = JSON.stringify(d);
+        else
+            o = d;
+        return o;
+    };
+    instanceProto.saveToJSON = function () {
+        var db_save = null;
+        if (this.db_name === "")
+            db_save = this.db()["get"]();
+        else {
+            var database_ref = get_global_database_reference(this.db_name);
+            if (database_ref.ownerUID === null)
+                database_ref.ownerUID = this.uid;
+            if (database_ref.ownerUID === this.uid)
+                db_save = this.db()["get"]();
+        }
+        var cur_fflt = {
+            "flt": this.filters,
+            "ord": this.order_cond
+        };
+        var qIds = null;
+        if (this.queriedRows) {
+            var rows = this.queriedRows["get"]();
+            var i, cnt = rows.length;
+            qIds = [];
+            for (i = 0; i < cnt; i++)
+                qIds.push(rows[i]["___id"]);
+        }
+        return {
+            "rID": this.rowID,
+            "name": this.db_name,
+            "idxKeys": this.indexKeys,
+            "db": db_save,
+            "fltcur": cur_fflt,
+            "preCmd": this.preprocessCmd,
+            "prepItm": this.preparedItem,
+            "flthis": (this.queriedRows) ? this.filter_history : null,
+            "kt": this.keyType,
+        };
+    };
+    instanceProto.loadFromJSON = function (o) {
+        this.rowID = o["rID"];
+        this.db_name = o["name"];
+        this.indexKeys = o["idxKeys"];
+        if (this.db_name === "")
+            this.db = window["TAFFY"](o["db"]);
+        else {
+            if (o["db"] !== null) {
+                if (cr.plugins_.Rex_taffydb.databases.hasOwnProperty(db_name))
+                    delete cr.plugins_.Rex_taffydb.databases[db_name];
+                create_global_database(this.uid, this.db_name, o["db"]);
+            }
+        }
+        this.filters = o["fltcur"]["flt"];
+        this.order_cond = o["fltcur"]["ord"];
+        this.preprocessCmd = o["preCmd"];
+        this.preparedItem = o["prepItm"];
+        this.__flthis_save = o["flthis"];
+        this.keyType = o["kt"];
+    };
+    instanceProto.afterLoad = function () {
+        if (this.db_name !== "") {
+            create_global_database(this.uid, this.db_name);
+            this.db = get_global_database_reference(this.db_name).db;
+        }
+        this.queriedRows = null;
+        var flthis = this.__flthis_save;
+        if (flthis) {
+            var q = this.db();
+            var flt = flthis["flt"];
+            if (!isEmptyTable(flt))
+                q = q["filter"](flt);
+            var ord = flthis["ord"];
+            if (ord !== "")
+                q = q["order"](ord);
+            this.queriedRows = q;
+            this.__flthis_save = null;
+        }
+    };
+    function Cnds() {};
+    pluginProto.cnds = new Cnds();
+    Cnds.prototype.ForEachRow = function () {
+        var queriedRows = this.GetCurrentQueriedRows();
+        var runtime = this.runtime;
+        var current_frame = runtime.getCurrentEventStack();
+        var current_event = current_frame.current_event;
+        var solModifierAfterCnds = current_frame.isModifierAfterCnds();
+        var self = this;
+        var for_each_row = function (r, i) {
+            if (solModifierAfterCnds) {
+                runtime.pushCopySol(current_event.solModifiers);
+            }
+            self.exp_CurRowID = r["___id"];
+            self.exp_CurRowIndex = i;
+            current_event.retrigger();
+            if (solModifierAfterCnds) {
+                runtime.popSol(current_event.solModifiers);
+            }
+        };
+        queriedRows["each"](for_each_row);
+        this.exp_CurRowID = "";
+        this.exp_CurRowIndex = -1;
+        return false;
+    };
+    Cnds.prototype.NewFilters = function () {
+        this.NewFilters();
+        return true;
+    };
+    Cnds.prototype.AddValueComparsion = function (k, cmp, v) {
+        this.AddValueComparsion(k, cmp, v);
+        return true;
+    };
+    Cnds.prototype.AddBooleanValueComparsion = function (k, v) {
+        this.AddValueComparsion(k, 0, (v === 1));
+        return true;
+    };
+    Cnds.prototype.AddValueInclude = function (k, v) {
+        this.AddValueInclude(k, v);
+        return true;
+    };
+    Cnds.prototype.AddRegexTest = function (k, s, f) {
+        this.AddRegexTest(k, s, f);
+        return true;
+    };
+    Cnds.prototype.AddOrder = function (k, order_) {
+        this.AddOrder(k, order_);
+        return true;
+    };
+    function Acts() {};
+    pluginProto.acts = new Acts();
+    Acts.prototype.InsertCSV = function (csv_string, is_eval, delimiter) {
+        is_eval = (is_eval === 1);
+        var csv_data = CSVToArray(csv_string, delimiter);
+        var col_keys = csv_data.shift(),
+            col_key;
+        var csv_row, row, cell_value;
+        var r, row_cnt = csv_data.length;
+        var c, col_cnt = col_keys.length;
+        var prefix; // for debug
+        for (r = 0; r < row_cnt; r++) {
+            csv_row = csv_data[r];
+            row = {};
+            for (c = 0; c < col_cnt; c++) {
+                col_key = col_keys[c];
+                cell_value = csv_row[c]; // string
+                prefix = " (" + r + "," + c + ") ";
+                if (is_eval)
+                    row[col_key] = getEvalValue(cell_value, prefix);
+                else {
+                    if (this.keyType.hasOwnProperty(col_key)) {
+                        var type = this.keyType[col_key];
+                        switch (type) {
+                            case 1: // number
+                                cell_value = parseFloat(cell_value);
+                                break;
+                            case 2: // eval
+                                cell_value = getEvalValue(cell_value, prefix);
+                                break;
+                        }
+                    }
+                    row[col_key] = cell_value;
+                }
+            }
+            this.SaveRow(row, this.indexKeys);
+        }
+        clean_table(this.keyType);
+    };
+    Acts.prototype.InsertJSON = function (json_string) {
+        var rows;
+        try {
+            rows = JSON.parse(json_string);
+        } catch (err) {
+            return;
+        }
+        var i, cnt = rows.length;
+        for (i = 0; i < cnt; i++)
+            this.SaveRow(rows[i], this.indexKeys);
+    };
+    Acts.prototype.RemoveByRowID = function (rowID) {
+        this.db(rowID)["remove"]();
+    };
+    Acts.prototype.RemoveByRowIndex = function (index_) {
+        var rowID = this.Index2QueriedRowID(index_, null);
+        if (rowID === null)
+            return;
+        this.db(rowID)["remove"]();
+    };
+    Acts.prototype.SetIndexKeys = function (params_) {
+        cr.shallowAssignArray(this.indexKeys, params_.split(","));
+    };
+    Acts.prototype.RemoveAll = function () {
+        this.db()["remove"]();
+    };
+    Acts.prototype.SetValue = function (key_, value_, cond) {
+        if (cond === 0)
+            this.preparedItem[key_] = value_;
+        else {
+            var cmdName = (cond === 1) ? "max" : "min";
+            this.preprocessCmd[cmdName][key_] = value_;
+            this.hasPreprocessCmd = true;
+        }
+    };
+    Acts.prototype.SetBooleanValue = function (key_, is_true) {
+        this.preparedItem[key_] = (is_true === 1);
+    };
+    Acts.prototype.Save = function () {
+        this.SaveRow(this.preparedItem, this.indexKeys, this.rowID, this.preprocessCmd);
+        this.rowID = "";
+        this.preparedItem = {};
+    };
+    Acts.prototype.UpdateQueriedRows = function (key_, value_) {
+        var queriedRows = this.GetCurrentQueriedRows();
+        var item = {};
+        item[key_] = value_;
+        queriedRows["update"](item);
+    };
+    Acts.prototype.UpdateQueriedRows_BooleanValue = function (key_, is_true) {
+        var queriedRows = this.GetCurrentQueriedRows();
+        var item = {};
+        item[key_] = (is_true === 1);
+        queriedRows["update"](item);
+    };
+    Acts.prototype.SetRowID = function (rowID) {
+        this.rowID = rowID;
+    };
+    Acts.prototype.SetRowIndex = function (index_) {
+        this.rowID = this.Index2QueriedRowID(index_, null);
+    };
+    Acts.prototype.IncValue = function (key_, value_) {
+        this.preprocessCmd["inc"][key_] = value_;
+        this.hasPreprocessCmd = true;
+    };
+    Acts.prototype.SetJSON = function (key_, value_) {
+        this.preparedItem[key_] = JSON.parse(value_);
+    };
+    Acts.prototype.NewFilters = function () {
+        this.NewFilters();
+    };
+    Acts.prototype.AddValueComparsion = function (k, cmp, v) {
+        this.AddValueComparsion(k, cmp, v);
+    };
+    Acts.prototype.AddBooleanValueComparsion = function (k, v) {
+        this.AddValueComparsion(k, 0, (v === 1));
+    };
+    Acts.prototype.AddValueInclude = function (k, v) {
+        this.AddValueInclude(k, v);
+    };
+    Acts.prototype.AddRegexTest = function (k, s, f) {
+        this.AddRegexTest(k, s, f);
+    };
+    Acts.prototype.AddOrder = function (k, order_) {
+        this.AddOrder(k, order_);
+    };
+    Acts.prototype.RemoveQueriedRows = function () {
+        var queriedRows = this.queriedRows;
+        if (queriedRows == null)
+            queriedRows = this.db(this.filters);
+        queriedRows["remove"]();
+        this.queriedRows = null;
+        this.CleanFilters();
+    };
+    Acts.prototype.InsertCSV_DefineType = function (key_, type_) {
+        this.keyType[key_] = type_;
+    };
+    Acts.prototype.LinkToDatabase = function (name) {
+        this.LinkToDatabase(name);
+    };
+    function Exps() {};
+    pluginProto.exps = new Exps();
+    Exps.prototype.At = function (ret) {
+        var primary_keys = {},
+            keyName;
+        var i, cnt = this.indexKeys.length;
+        for (i = 0; i < cnt; i++) {
+            keyName = this.indexKeys[i];
+            primary_keys[keyName] = arguments[i + 1];
+        }
+        var row = this.db(primary_keys)["first"]();
+        var k = arguments[cnt + 1];
+        var default_value = arguments[cnt + 2];
+        ret.set_any(getItemValue(row, k, default_value));
+    };
+    Exps.prototype.CurRowContent = function (ret, k, default_value) {
+        var row = this.db(this.exp_CurRowID)["get"]()[0];
+        ret.set_any(getItemValue(row, k, default_value));
+    };
+    Exps.prototype.Index2QueriedRowContent = function (ret, i, k, default_value) {
+        var queriedRows = this.GetCurrentQueriedRows();
+        var row = queriedRows["get"]()[i];
+        ret.set_any(getItemValue(row, k, default_value));
+    };
+    Exps.prototype.QueriedRowsCount = function (ret) {
+        var queriedRows = this.GetCurrentQueriedRows();
+        ret.set_int(queriedRows["count"]());
+    };
+    Exps.prototype.QueriedSum = function (ret, k) {
+        var queriedRows = this.GetCurrentQueriedRows();
+        ret.set_int(queriedRows["sum"](k));
+    };
+    Exps.prototype.QueriedMin = function (ret, k) {
+        var queriedRows = this.GetCurrentQueriedRows();
+        ret.set_int(queriedRows["min"](k));
+    };
+    Exps.prototype.QueriedMax = function (ret, k) {
+        var queriedRows = this.GetCurrentQueriedRows();
+        ret.set_int(queriedRows["max"](k));
+    };
+    Exps.prototype.QueriedRowsAsJSON = function (ret) {
+        var queriedRows = this.GetCurrentQueriedRows();
+        ret.set_string(queriedRows["stringify"]());
+    };
+    Exps.prototype.KeyRowID = function (ret) {
+        ret.set_string("___id");
+    };
+    Exps.prototype.LastSavedRowID = function (ret) {
+        ret.set_string(this.exp_LastSavedRowID);
+    };
+    Exps.prototype.ID2RowContent = function (ret, rowID, k, default_value) {
+        var row = this.db(rowID)["get"]()[0];
+        ret.set_any(getItemValue(row, k, default_value));
+    };
+    Exps.prototype.QueriedRowsIndex2RowID = function (ret, index_) {
+        ret.set_string(this.Index2QueriedRowID(index_, ""));
+    };
+    Exps.prototype.CurRowIndex = function (ret) {
+        ret.set_int(this.exp_CurRowIndex);
+    };
+    Exps.prototype.CurRowID = function (ret) {
+        ret.set_any(this.exp_CurRowID);
+    };
+    Exps.prototype.Index2QueriedRowID = function (ret, index_) {
+        ret.set_string(this.Index2QueriedRowID(index_, ""));
+    };
+    Exps.prototype.AllRowsAsJSON = function (ret) {
+        ret.set_string(this.db()["stringify"]());
+    };
+    Exps.prototype.AllRowsCount = function (ret) {
+        ret.set_int(this.db()["count"]());
+    };
+    Exps.prototype.DatabaseName = function (ret) {
+        ret.set_string(this.db_name);
+    };
+    var CSVToArray = function (strData, strDelimiter) {
+        strDelimiter = (strDelimiter || ",");
+        var objPattern = new RegExp(
+            (
+                "(\\" + strDelimiter + "|\\r?\\n|\\r|^)" +
+                "(?:\"([^\"]*(?:\"\"[^\"]*)*)\"|" +
+                "([^\"\\" + strDelimiter + "\\r\\n]*))"
+            ),
+            "gi"
+        );
+        var arrData = [
+            []
+        ];
+        var arrMatches = null;
+        while (arrMatches = objPattern.exec(strData)) {
+            var strMatchedDelimiter = arrMatches[1];
+            if (
+                strMatchedDelimiter.length &&
+                (strMatchedDelimiter != strDelimiter)
+            ) {
+                arrData.push([]);
+            }
+            if (arrMatches[2]) {
+                var strMatchedValue = arrMatches[2].replace(
+                    new RegExp("\"\"", "g"),
+                    "\""
+                );
+            } else {
+                var strMatchedValue = arrMatches[3];
+            }
+            arrData[arrData.length - 1].push(strMatchedValue);
+        }
+        return (arrData);
     };
 }());
 ;
@@ -20400,6 +21274,268 @@ cr.plugins_.Text = function(runtime)
 	Exps.prototype.TextHeight = function (ret)
 	{
 		ret.set_int(this.lines.length * (this.pxHeight + this.line_height_offset) - this.line_height_offset);
+	};
+	pluginProto.exps = new Exps();
+}());
+;
+;
+cr.plugins_.WebStorage = function(runtime)
+{
+	this.runtime = runtime;
+};
+(function()
+{
+	var pluginProto = cr.plugins_.WebStorage.prototype;
+	pluginProto.Type = function(plugin)
+	{
+		this.plugin = plugin;
+		this.runtime = plugin.runtime;
+	};
+	var typeProto = pluginProto.Type.prototype;
+	typeProto.onCreate = function()
+	{
+	};
+	pluginProto.Instance = function(type)
+	{
+		this.type = type;
+		this.runtime = type.runtime;
+	};
+	var instanceProto = pluginProto.Instance.prototype;
+	var prefix = "";
+	var is_arcade = (typeof window["is_scirra_arcade"] !== "undefined");
+	if (is_arcade)
+		prefix = "arcade" + window["scirra_arcade_id"];
+	var isSupported = false;
+	try {
+		localStorage.getItem("test");
+		isSupported = true;
+	}
+	catch (e)
+	{
+		isSupported = false;
+	}
+	instanceProto.onCreate = function()
+	{
+		if (!isSupported)
+		{
+			cr.logexport("[Construct 2] Webstorage plugin: local storage is not supported on this platform.");
+		}
+	};
+	function Cnds() {};
+	Cnds.prototype.LocalStorageEnabled = function()
+	{
+		return isSupported;
+	};
+	Cnds.prototype.SessionStorageEnabled = function()
+	{
+		return isSupported;
+	};
+	Cnds.prototype.LocalStorageExists = function(key)
+	{
+		if (!isSupported)
+			return false;
+		return localStorage.getItem(prefix + key) != null;
+	};
+	Cnds.prototype.SessionStorageExists = function(key)
+	{
+		if (!isSupported)
+			return false;
+		return sessionStorage.getItem(prefix + key) != null;
+	};
+	Cnds.prototype.OnQuotaExceeded = function ()
+	{
+		return true;
+	};
+	Cnds.prototype.CompareKeyText = function (key, text_to_compare, case_sensitive)
+	{
+		if (!isSupported)
+			return false;
+		var value = localStorage.getItem(prefix + key) || "";
+		if (case_sensitive)
+			return value == text_to_compare;
+		else
+			return cr.equals_nocase(value, text_to_compare);
+	};
+	Cnds.prototype.CompareKeyNumber = function (key, cmp, x)
+	{
+		if (!isSupported)
+			return false;
+		var value = localStorage.getItem(prefix + key) || "";
+		return cr.do_cmp(parseFloat(value), cmp, x);
+	};
+	pluginProto.cnds = new Cnds();
+	function Acts() {};
+	Acts.prototype.StoreLocal = function(key, data)
+	{
+		if (!isSupported)
+			return;
+		try {
+			localStorage.setItem(prefix + key, data);
+		}
+		catch (e)
+		{
+			this.runtime.trigger(cr.plugins_.WebStorage.prototype.cnds.OnQuotaExceeded, this);
+		}
+	};
+	Acts.prototype.StoreSession = function(key,data)
+	{
+		if (!isSupported)
+			return;
+		try {
+			sessionStorage.setItem(prefix + key, data);
+		}
+		catch (e)
+		{
+			this.runtime.trigger(cr.plugins_.WebStorage.prototype.cnds.OnQuotaExceeded, this);
+		}
+	};
+	Acts.prototype.RemoveLocal = function(key)
+	{
+		if (!isSupported)
+			return;
+		localStorage.removeItem(prefix + key);
+	};
+	Acts.prototype.RemoveSession = function(key)
+	{
+		if (!isSupported)
+			return;
+		sessionStorage.removeItem(prefix + key);
+	};
+	Acts.prototype.ClearLocal = function()
+	{
+		if (!isSupported)
+			return;
+		if (!is_arcade)
+			localStorage.clear();
+	};
+	Acts.prototype.ClearSession = function()
+	{
+		if (!isSupported)
+			return;
+		if (!is_arcade)
+			sessionStorage.clear();
+	};
+	Acts.prototype.JSONLoad = function (json_, mode_)
+	{
+		if (!isSupported)
+			return;
+		var d;
+		try {
+			d = JSON.parse(json_);
+		}
+		catch(e) { return; }
+		if (!d["c2dictionary"])			// presumably not a c2dictionary object
+			return;
+		var o = d["data"];
+		if (mode_ === 0 && !is_arcade)	// 'set' mode: must clear webstorage first
+			localStorage.clear();
+		var p;
+		for (p in o)
+		{
+			if (o.hasOwnProperty(p))
+			{
+				try {
+					localStorage.setItem(prefix + p, o[p]);
+				}
+				catch (e)
+				{
+					this.runtime.trigger(cr.plugins_.WebStorage.prototype.cnds.OnQuotaExceeded, this);
+					return;
+				}
+			}
+		}
+	};
+	pluginProto.acts = new Acts();
+	function Exps() {};
+	Exps.prototype.LocalValue = function(ret,key)
+	{
+		if (!isSupported)
+		{
+			ret.set_string("");
+			return;
+		}
+		ret.set_string(localStorage.getItem(prefix + key) || "");
+	};
+	Exps.prototype.SessionValue = function(ret,key)
+	{
+		if (!isSupported)
+		{
+			ret.set_string("");
+			return;
+		}
+		ret.set_string(sessionStorage.getItem(prefix + key) || "");
+	};
+	Exps.prototype.LocalCount = function(ret)
+	{
+		if (!isSupported)
+		{
+			ret.set_int(0);
+			return;
+		}
+		ret.set_int(is_arcade ? 0 : localStorage.length);
+	};
+	Exps.prototype.SessionCount = function(ret)
+	{
+		if (!isSupported)
+		{
+			ret.set_int(0);
+			return;
+		}
+		ret.set_int(is_arcade ? 0 : sessionStorage.length);
+	};
+	Exps.prototype.LocalAt = function(ret,n)
+	{
+		if (is_arcade || !isSupported)
+			ret.set_string("");
+		else
+			ret.set_string(localStorage.getItem(localStorage.key(n)) || "");
+	};
+	Exps.prototype.SessionAt = function(ret,n)
+	{
+		if (is_arcade || !isSupported)
+			ret.set_string("");
+		else
+			ret.set_string(sessionStorage.getItem(sessionStorage.key(n)) || "");
+	};
+	Exps.prototype.LocalKeyAt = function(ret,n)
+	{
+		if (is_arcade || !isSupported)
+			ret.set_string("");
+		else
+			ret.set_string(localStorage.key(n) || "");
+	};
+	Exps.prototype.SessionKeyAt = function(ret,n)
+	{
+		if (is_arcade || !isSupported)
+			ret.set_string("");
+		else
+			ret.set_string(sessionStorage.key(n) || "");
+	};
+	Exps.prototype.AsJSON = function (ret)
+	{
+		if (!isSupported)
+		{
+			ret.set_string("");
+			return;
+		}
+		var o = {}, i, len, k;
+		for (i = 0, len = localStorage.length; i < len; i++)
+		{
+			k = localStorage.key(i);
+			if (is_arcade)
+			{
+				if (k.substr(0, prefix.length) === prefix)
+				{
+					o[k.substr(prefix.length)] = localStorage.getItem(k);
+				}
+			}
+			else
+				o[k] = localStorage.getItem(k);
+		}
+		ret.set_string(JSON.stringify({
+			"c2dictionary": true,
+			"data": o
+		}));
 	};
 	pluginProto.exps = new Exps();
 }());
@@ -24502,22 +25638,37 @@ cr.behaviors.scrollto = function(runtime)
 cr.getObjectRefTable = function () { return [
 	cr.plugins_.Browser,
 	cr.plugins_.Button,
-	cr.plugins_.Function,
 	cr.plugins_.filechooser,
+	cr.plugins_.Function,
 	cr.plugins_.Sprite,
 	cr.plugins_.Text,
+	cr.plugins_.WebStorage,
+	cr.plugins_.Rex_TimeAway,
 	cr.plugins_.rex_TouchWrap,
+	cr.plugins_.Rex_WebstorageExt,
 	cr.plugins_.Rex_canvas,
 	cr.plugins_.Rex_fnCallPkg,
-	cr.plugins_.Rex_jsshell,
-	cr.plugins_.Rex_Hash,
 	cr.plugins_.Rex_JSONBuider,
+	cr.plugins_.Rex_Hash,
+	cr.plugins_.Rex_jsshell,
 	cr.plugins_.Rex_Nickname,
+	cr.plugins_.Rex_taffydb,
 	cr.plugins_.rex_TagText,
 	cr.behaviors.scrollto,
 	cr.behaviors.Rex_Button2,
 	cr.behaviors.rex_Anchor_mod,
 	cr.behaviors.Rex_bNickname,
+	cr.system_object.prototype.cnds.OnLayoutStart,
+	cr.behaviors.Rex_Button2.prototype.cnds.OnClick,
+	cr.plugins_.Sprite.prototype.cnds.CompareInstanceVar,
+	cr.plugins_.Rex_fnCallPkg.prototype.acts.CallFunction,
+	cr.plugins_.Function.prototype.cnds.OnFunction,
+	cr.system_object.prototype.acts.GoToLayoutByName,
+	cr.plugins_.Function.prototype.exps.Param,
+	cr.system_object.prototype.cnds.Compare,
+	cr.plugins_.Rex_WebstorageExt.prototype.exps.LocalValue,
+	cr.plugins_.Function.prototype.acts.CallFunction,
+	cr.system_object.prototype.cnds.Else,
 	cr.system_object.prototype.cnds.IsGroupActive,
 	cr.system_object.prototype.cnds.Every,
 	cr.system_object.prototype.acts.SetVar,
@@ -24526,20 +25677,17 @@ cr.getObjectRefTable = function () { return [
 	cr.system_object.prototype.exps.newline,
 	cr.plugins_.Text.prototype.acts.AppendText,
 	cr.plugins_.Button.prototype.cnds.OnClicked,
-	cr.plugins_.Function.prototype.acts.CallFunction,
-	cr.plugins_.Function.prototype.cnds.OnFunction,
 	cr.plugins_.Rex_jsshell.prototype.acts.SetFunctionName,
 	cr.plugins_.Rex_jsshell.prototype.acts.AddValue,
-	cr.plugins_.Function.prototype.exps.Param,
 	cr.plugins_.Rex_jsshell.prototype.acts.AddCallback,
 	cr.plugins_.Rex_jsshell.prototype.acts.InvokeFunction,
 	cr.plugins_.Rex_jsshell.prototype.cnds.OnCallback,
 	cr.plugins_.Rex_jsshell.prototype.exps.Param,
+	cr.plugins_.WebStorage.prototype.acts.StoreLocal,
 	cr.plugins_.Rex_Hash.prototype.acts.CleanAll,
 	cr.plugins_.Rex_Hash.prototype.acts.InsertValue,
 	cr.plugins_.Rex_Hash.prototype.exps.AtKeys,
 	cr.plugins_.Rex_jsshell.prototype.acts.AddJSON,
-	cr.system_object.prototype.cnds.Compare,
 	cr.plugins_.Rex_JSONBuider.prototype.acts.Clean,
 	cr.plugins_.Rex_JSONBuider.prototype.cnds.SetRoot,
 	cr.plugins_.Rex_JSONBuider.prototype.acts.AddValue,
@@ -24550,21 +25698,23 @@ cr.getObjectRefTable = function () { return [
 	cr.plugins_.Rex_JSONBuider.prototype.acts.AddBooleanValue,
 	cr.plugins_.Browser.prototype.acts.ConsoleLog,
 	cr.plugins_.Rex_Hash.prototype.exps.AsJSON,
-	cr.system_object.prototype.cnds.IsOnPlatform,
 	cr.plugins_.Rex_canvas.prototype.acts.LoadURL,
 	cr.plugins_.Browser.prototype.acts.ExecJs,
 	cr.plugins_.Rex_jsshell.prototype.acts.AddObject,
+	cr.system_object.prototype.acts.SnapshotCanvas,
+	cr.system_object.prototype.cnds.OnCanvasSnapshot,
+	cr.system_object.prototype.exps.canvassnapshot,
 	cr.system_object.prototype.acts.Wait,
 	cr.plugins_.Browser.prototype.cnds.OnBackButton,
 	cr.system_object.prototype.exps.time,
 	cr.plugins_.Browser.prototype.acts.Close,
-	cr.system_object.prototype.cnds.Else,
 	cr.plugins_.filechooser.prototype.cnds.OnChanged,
 	cr.plugins_.filechooser.prototype.exps.FileURLAt,
-	cr.system_object.prototype.cnds.OnLayoutStart,
-	cr.plugins_.Rex_Nickname.prototype.acts.CreateInst,
-	cr.behaviors.Rex_Button2.prototype.cnds.OnClick,
-	cr.plugins_.Sprite.prototype.cnds.CompareInstanceVar,
-	cr.plugins_.Rex_fnCallPkg.prototype.acts.CallFunction,
-	cr.system_object.prototype.acts.GoToLayoutByName
+	cr.plugins_.Rex_TimeAway.prototype.exps.ElapsedTime,
+	cr.plugins_.Rex_TimeAway.prototype.acts.StartTimer,
+	cr.system_object.prototype.exps.min,
+	cr.system_object.prototype.exps.floor,
+	cr.behaviors.Rex_Button2.prototype.cnds.OnRollingIn,
+	cr.plugins_.Sprite.prototype.acts.SetAnimFrame,
+	cr.behaviors.Rex_Button2.prototype.cnds.OnRollingOut
 ];};
