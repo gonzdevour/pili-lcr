@@ -15144,6 +15144,326 @@ cr.system_object.prototype.loadFromJSON = function (o)
 cr.shaders = {};
 ;
 ;
+cr.plugins_.AJAX = function(runtime)
+{
+	this.runtime = runtime;
+};
+(function ()
+{
+	var isNWjs = false;
+	var path = null;
+	var fs = null;
+	var nw_appfolder = "";
+	var pluginProto = cr.plugins_.AJAX.prototype;
+	pluginProto.Type = function(plugin)
+	{
+		this.plugin = plugin;
+		this.runtime = plugin.runtime;
+	};
+	var typeProto = pluginProto.Type.prototype;
+	typeProto.onCreate = function()
+	{
+	};
+	pluginProto.Instance = function(type)
+	{
+		this.type = type;
+		this.runtime = type.runtime;
+		this.lastData = "";
+		this.curTag = "";
+		this.progress = 0;
+		this.timeout = -1;
+		isNWjs = this.runtime.isNWjs;
+		if (isNWjs)
+		{
+			path = require("path");
+			fs = require("fs");
+			var process = window["process"] || nw["process"];
+			nw_appfolder = path["dirname"](process["execPath"]) + "\\";
+		}
+	};
+	var instanceProto = pluginProto.Instance.prototype;
+	var theInstance = null;
+	window["C2_AJAX_DCSide"] = function (event_, tag_, param_)
+	{
+		if (!theInstance)
+			return;
+		if (event_ === "success")
+		{
+			theInstance.curTag = tag_;
+			theInstance.lastData = param_;
+			theInstance.runtime.trigger(cr.plugins_.AJAX.prototype.cnds.OnAnyComplete, theInstance);
+			theInstance.runtime.trigger(cr.plugins_.AJAX.prototype.cnds.OnComplete, theInstance);
+		}
+		else if (event_ === "error")
+		{
+			theInstance.curTag = tag_;
+			theInstance.runtime.trigger(cr.plugins_.AJAX.prototype.cnds.OnAnyError, theInstance);
+			theInstance.runtime.trigger(cr.plugins_.AJAX.prototype.cnds.OnError, theInstance);
+		}
+		else if (event_ === "progress")
+		{
+			theInstance.progress = param_;
+			theInstance.curTag = tag_;
+			theInstance.runtime.trigger(cr.plugins_.AJAX.prototype.cnds.OnProgress, theInstance);
+		}
+	};
+	instanceProto.onCreate = function()
+	{
+		theInstance = this;
+	};
+	instanceProto.saveToJSON = function ()
+	{
+		return { "lastData": this.lastData };
+	};
+	instanceProto.loadFromJSON = function (o)
+	{
+		this.lastData = o["lastData"];
+		this.curTag = "";
+		this.progress = 0;
+	};
+	var next_request_headers = {};
+	var next_override_mime = "";
+	instanceProto.doRequest = function (tag_, url_, method_, data_)
+	{
+		if (this.runtime.isDirectCanvas)
+		{
+			AppMobi["webview"]["execute"]('C2_AJAX_WebSide("' + tag_ + '", "' + url_ + '", "' + method_ + '", ' + (data_ ? '"' + data_ + '"' : "null") + ');');
+			return;
+		}
+		var self = this;
+		var request = null;
+		var doErrorFunc = function ()
+		{
+			self.curTag = tag_;
+			self.runtime.trigger(cr.plugins_.AJAX.prototype.cnds.OnAnyError, self);
+			self.runtime.trigger(cr.plugins_.AJAX.prototype.cnds.OnError, self);
+		};
+		var errorFunc = function ()
+		{
+			if (isNWjs)
+			{
+				var filepath = nw_appfolder + url_;
+				if (fs["existsSync"](filepath))
+				{
+					fs["readFile"](filepath, {"encoding": "utf8"}, function (err, data) {
+						if (err)
+						{
+							doErrorFunc();
+							return;
+						}
+						self.curTag = tag_;
+						self.lastData = data.replace(/\r\n/g, "\n")
+						self.runtime.trigger(cr.plugins_.AJAX.prototype.cnds.OnAnyComplete, self);
+						self.runtime.trigger(cr.plugins_.AJAX.prototype.cnds.OnComplete, self);
+					});
+				}
+				else
+					doErrorFunc();
+			}
+			else
+				doErrorFunc();
+		};
+		var progressFunc = function (e)
+		{
+			if (!e["lengthComputable"])
+				return;
+			self.progress = e.loaded / e.total;
+			self.curTag = tag_;
+			self.runtime.trigger(cr.plugins_.AJAX.prototype.cnds.OnProgress, self);
+		};
+		try
+		{
+			if (this.runtime.isWindowsPhone8)
+				request = new ActiveXObject("Microsoft.XMLHTTP");
+			else
+				request = new XMLHttpRequest();
+			request.onreadystatechange = function()
+			{
+				if (request.readyState === 4)
+				{
+					self.curTag = tag_;
+					if (request.responseText)
+						self.lastData = request.responseText.replace(/\r\n/g, "\n");		// fix windows style line endings
+					else
+						self.lastData = "";
+					if (request.status >= 400)
+					{
+						self.runtime.trigger(cr.plugins_.AJAX.prototype.cnds.OnAnyError, self);
+						self.runtime.trigger(cr.plugins_.AJAX.prototype.cnds.OnError, self);
+					}
+					else
+					{
+						if ((!isNWjs || self.lastData.length) && !(!isNWjs && request.status === 0 && !self.lastData.length))
+						{
+							self.runtime.trigger(cr.plugins_.AJAX.prototype.cnds.OnAnyComplete, self);
+							self.runtime.trigger(cr.plugins_.AJAX.prototype.cnds.OnComplete, self);
+						}
+					}
+				}
+			};
+			if (!this.runtime.isWindowsPhone8)
+			{
+				request.onerror = errorFunc;
+				request.ontimeout = errorFunc;
+				request.onabort = errorFunc;
+				request["onprogress"] = progressFunc;
+			}
+			request.open(method_, url_);
+			if (!this.runtime.isWindowsPhone8)
+			{
+				if (this.timeout >= 0 && typeof request["timeout"] !== "undefined")
+					request["timeout"] = this.timeout;
+			}
+			try {
+				request.responseType = "text";
+			} catch (e) {}
+			if (data_)
+			{
+				if (request["setRequestHeader"] && !next_request_headers.hasOwnProperty("Content-Type"))
+				{
+					request["setRequestHeader"]("Content-Type", "application/x-www-form-urlencoded");
+				}
+			}
+			if (request["setRequestHeader"])
+			{
+				var p;
+				for (p in next_request_headers)
+				{
+					if (next_request_headers.hasOwnProperty(p))
+					{
+						try {
+							request["setRequestHeader"](p, next_request_headers[p]);
+						}
+						catch (e) {}
+					}
+				}
+				next_request_headers = {};
+			}
+			if (next_override_mime && request["overrideMimeType"])
+			{
+				try {
+					request["overrideMimeType"](next_override_mime);
+				}
+				catch (e) {}
+				next_override_mime = "";
+			}
+			if (data_)
+				request.send(data_);
+			else
+				request.send();
+		}
+		catch (e)
+		{
+			errorFunc();
+		}
+	};
+	function Cnds() {};
+	Cnds.prototype.OnComplete = function (tag)
+	{
+		return cr.equals_nocase(tag, this.curTag);
+	};
+	Cnds.prototype.OnAnyComplete = function (tag)
+	{
+		return true;
+	};
+	Cnds.prototype.OnError = function (tag)
+	{
+		return cr.equals_nocase(tag, this.curTag);
+	};
+	Cnds.prototype.OnAnyError = function (tag)
+	{
+		return true;
+	};
+	Cnds.prototype.OnProgress = function (tag)
+	{
+		return cr.equals_nocase(tag, this.curTag);
+	};
+	pluginProto.cnds = new Cnds();
+	function Acts() {};
+	Acts.prototype.Request = function (tag_, url_)
+	{
+		var self = this;
+		if (this.runtime.isWKWebView && !this.runtime.isAbsoluteUrl(url_))
+		{
+			this.runtime.fetchLocalFileViaCordovaAsText(url_,
+			function (str)
+			{
+				self.curTag = tag_;
+				self.lastData = str.replace(/\r\n/g, "\n");		// fix windows style line endings
+				self.runtime.trigger(cr.plugins_.AJAX.prototype.cnds.OnAnyComplete, self);
+				self.runtime.trigger(cr.plugins_.AJAX.prototype.cnds.OnComplete, self);
+			},
+			function (err)
+			{
+				self.curTag = tag_;
+				self.runtime.trigger(cr.plugins_.AJAX.prototype.cnds.OnAnyError, self);
+				self.runtime.trigger(cr.plugins_.AJAX.prototype.cnds.OnError, self);
+			});
+		}
+		else
+		{
+			this.doRequest(tag_, url_, "GET");
+		}
+	};
+	Acts.prototype.RequestFile = function (tag_, file_)
+	{
+		var self = this;
+		if (this.runtime.isWKWebView)
+		{
+			this.runtime.fetchLocalFileViaCordovaAsText(file_,
+			function (str)
+			{
+				self.curTag = tag_;
+				self.lastData = str.replace(/\r\n/g, "\n");		// fix windows style line endings
+				self.runtime.trigger(cr.plugins_.AJAX.prototype.cnds.OnAnyComplete, self);
+				self.runtime.trigger(cr.plugins_.AJAX.prototype.cnds.OnComplete, self);
+			},
+			function (err)
+			{
+				self.curTag = tag_;
+				self.runtime.trigger(cr.plugins_.AJAX.prototype.cnds.OnAnyError, self);
+				self.runtime.trigger(cr.plugins_.AJAX.prototype.cnds.OnError, self);
+			});
+		}
+		else
+		{
+			this.doRequest(tag_, file_, "GET");
+		}
+	};
+	Acts.prototype.Post = function (tag_, url_, data_, method_)
+	{
+		this.doRequest(tag_, url_, method_, data_);
+	};
+	Acts.prototype.SetTimeout = function (t)
+	{
+		this.timeout = t * 1000;
+	};
+	Acts.prototype.SetHeader = function (n, v)
+	{
+		next_request_headers[n] = v;
+	};
+	Acts.prototype.OverrideMIMEType = function (m)
+	{
+		next_override_mime = m;
+	};
+	pluginProto.acts = new Acts();
+	function Exps() {};
+	Exps.prototype.LastData = function (ret)
+	{
+		ret.set_string(this.lastData);
+	};
+	Exps.prototype.Progress = function (ret)
+	{
+		ret.set_float(this.progress);
+	};
+	Exps.prototype.Tag = function (ret)
+	{
+		ret.set_string(this.curTag);
+	};
+	pluginProto.exps = new Exps();
+}());
+;
+;
 cr.plugins_.Browser = function(runtime)
 {
 	this.runtime = runtime;
@@ -15959,285 +16279,6 @@ cr.plugins_.Browser = function(runtime)
 }());
 ;
 ;
-cr.plugins_.Button = function(runtime)
-{
-	this.runtime = runtime;
-};
-(function ()
-{
-	var pluginProto = cr.plugins_.Button.prototype;
-	pluginProto.Type = function(plugin)
-	{
-		this.plugin = plugin;
-		this.runtime = plugin.runtime;
-	};
-	var typeProto = pluginProto.Type.prototype;
-	typeProto.onCreate = function()
-	{
-	};
-	pluginProto.Instance = function(type)
-	{
-		this.type = type;
-		this.runtime = type.runtime;
-	};
-	var instanceProto = pluginProto.Instance.prototype;
-	instanceProto.onCreate = function()
-	{
-		if (this.runtime.isDomFree)
-		{
-			cr.logexport("[Construct 2] Button plugin not supported on this platform - the object will not be created");
-			return;
-		}
-		this.isCheckbox = (this.properties[0] === 1);
-		this.inputElem = document.createElement("input");
-		if (this.isCheckbox)
-			this.elem = document.createElement("label");
-		else
-			this.elem = this.inputElem;
-		this.labelText = null;
-		this.inputElem.type = (this.isCheckbox ? "checkbox" : "button");
-		this.inputElem.id = this.properties[6];
-		jQuery(this.elem).appendTo(this.runtime.canvasdiv ? this.runtime.canvasdiv : "body");
-		if (this.isCheckbox)
-		{
-			jQuery(this.inputElem).appendTo(this.elem);
-			this.labelText = document.createTextNode(this.properties[1]);
-			jQuery(this.elem).append(this.labelText);
-			this.inputElem.checked = (this.properties[7] !== 0);
-			jQuery(this.elem).css("font-family", "sans-serif");
-			jQuery(this.elem).css("display", "inline-block");
-			jQuery(this.elem).css("color", "black");
-		}
-		else
-			this.inputElem.value = this.properties[1];
-		this.elem.title = this.properties[2];
-		this.inputElem.disabled = (this.properties[4] === 0);
-		this.autoFontSize = (this.properties[5] !== 0);
-		this.element_hidden = false;
-		if (this.properties[3] === 0)
-		{
-			jQuery(this.elem).hide();
-			this.visible = false;
-			this.element_hidden = true;
-		}
-		this.inputElem.onclick = (function (self) {
-			return function(e) {
-				e.stopPropagation();
-				self.runtime.isInUserInputEvent = true;
-				self.runtime.trigger(cr.plugins_.Button.prototype.cnds.OnClicked, self);
-				self.runtime.isInUserInputEvent = false;
-			};
-		})(this);
-		this.elem.addEventListener("touchstart", function (e) {
-			e.stopPropagation();
-		}, false);
-		this.elem.addEventListener("touchmove", function (e) {
-			e.stopPropagation();
-		}, false);
-		this.elem.addEventListener("touchend", function (e) {
-			e.stopPropagation();
-		}, false);
-		jQuery(this.elem).mousedown(function (e) {
-			e.stopPropagation();
-		});
-		jQuery(this.elem).mouseup(function (e) {
-			e.stopPropagation();
-		});
-		jQuery(this.elem).keydown(function (e) {
-			e.stopPropagation();
-		});
-		jQuery(this.elem).keyup(function (e) {
-			e.stopPropagation();
-		});
-		this.lastLeft = 0;
-		this.lastTop = 0;
-		this.lastRight = 0;
-		this.lastBottom = 0;
-		this.lastWinWidth = 0;
-		this.lastWinHeight = 0;
-		this.updatePosition(true);
-		this.runtime.tickMe(this);
-	};
-	instanceProto.saveToJSON = function ()
-	{
-		var o = {
-			"tooltip": this.elem.title,
-			"disabled": !!this.inputElem.disabled
-		};
-		if (this.isCheckbox)
-		{
-			o["checked"] = !!this.inputElem.checked;
-			o["text"] = this.labelText.nodeValue;
-		}
-		else
-		{
-			o["text"] = this.elem.value;
-		}
-		return o;
-	};
-	instanceProto.loadFromJSON = function (o)
-	{
-		this.elem.title = o["tooltip"];
-		this.inputElem.disabled = o["disabled"];
-		if (this.isCheckbox)
-		{
-			this.inputElem.checked = o["checked"];
-			this.labelText.nodeValue = o["text"];
-		}
-		else
-		{
-			this.elem.value = o["text"];
-		}
-	};
-	instanceProto.onDestroy = function ()
-	{
-		if (this.runtime.isDomFree)
-			return;
-		jQuery(this.elem).remove();
-		this.elem = null;
-	};
-	instanceProto.tick = function ()
-	{
-		this.updatePosition();
-	};
-	var last_canvas_offset = null;
-	var last_checked_tick = -1;
-	instanceProto.updatePosition = function (first)
-	{
-		if (this.runtime.isDomFree)
-			return;
-		var left = this.layer.layerToCanvas(this.x, this.y, true);
-		var top = this.layer.layerToCanvas(this.x, this.y, false);
-		var right = this.layer.layerToCanvas(this.x + this.width, this.y + this.height, true);
-		var bottom = this.layer.layerToCanvas(this.x + this.width, this.y + this.height, false);
-		var rightEdge = this.runtime.width / this.runtime.devicePixelRatio;
-		var bottomEdge = this.runtime.height / this.runtime.devicePixelRatio;
-		if (!this.visible || !this.layer.visible || right <= 0 || bottom <= 0 || left >= rightEdge || top >= bottomEdge)
-		{
-			if (!this.element_hidden)
-				jQuery(this.elem).hide();
-			this.element_hidden = true;
-			return;
-		}
-		if (left < 1)
-			left = 1;
-		if (top < 1)
-			top = 1;
-		if (right >= rightEdge)
-			right = rightEdge - 1;
-		if (bottom >= bottomEdge)
-			bottom = bottomEdge - 1;
-		var curWinWidth = window.innerWidth;
-		var curWinHeight = window.innerHeight;
-		if (!first && this.lastLeft === left && this.lastTop === top && this.lastRight === right && this.lastBottom === bottom && this.lastWinWidth === curWinWidth && this.lastWinHeight === curWinHeight)
-		{
-			if (this.element_hidden)
-			{
-				jQuery(this.elem).show();
-				this.element_hidden = false;
-			}
-			return;
-		}
-		this.lastLeft = left;
-		this.lastTop = top;
-		this.lastRight = right;
-		this.lastBottom = bottom;
-		this.lastWinWidth = curWinWidth;
-		this.lastWinHeight = curWinHeight;
-		if (this.element_hidden)
-		{
-			jQuery(this.elem).show();
-			this.element_hidden = false;
-		}
-		var offx = Math.round(left) + jQuery(this.runtime.canvas).offset().left;
-		var offy = Math.round(top) + jQuery(this.runtime.canvas).offset().top;
-		jQuery(this.elem).css("position", "absolute");
-		jQuery(this.elem).offset({left: offx, top: offy});
-		jQuery(this.elem).width(Math.round(right - left));
-		jQuery(this.elem).height(Math.round(bottom - top));
-		if (this.autoFontSize)
-			jQuery(this.elem).css("font-size", ((this.layer.getScale(true) / this.runtime.devicePixelRatio) - 0.2) + "em");
-	};
-	instanceProto.draw = function(ctx)
-	{
-	};
-	instanceProto.drawGL = function(glw)
-	{
-	};
-	function Cnds() {};
-	Cnds.prototype.OnClicked = function ()
-	{
-		return true;
-	};
-	Cnds.prototype.IsChecked = function ()
-	{
-		return this.isCheckbox && this.inputElem.checked;
-	};
-	pluginProto.cnds = new Cnds();
-	function Acts() {};
-	Acts.prototype.SetText = function (text)
-	{
-		if (this.runtime.isDomFree)
-			return;
-		if (this.isCheckbox)
-			this.labelText.nodeValue = text;
-		else
-			this.elem.value = text;
-	};
-	Acts.prototype.SetTooltip = function (text)
-	{
-		if (this.runtime.isDomFree)
-			return;
-		this.elem.title = text;
-	};
-	Acts.prototype.SetVisible = function (vis)
-	{
-		if (this.runtime.isDomFree)
-			return;
-		this.visible = (vis !== 0);
-	};
-	Acts.prototype.SetEnabled = function (en)
-	{
-		if (this.runtime.isDomFree)
-			return;
-		this.inputElem.disabled = (en === 0);
-	};
-	Acts.prototype.SetFocus = function ()
-	{
-		if (this.runtime.isDomFree)
-			return;
-		this.inputElem.focus();
-	};
-	Acts.prototype.SetBlur = function ()
-	{
-		if (this.runtime.isDomFree)
-			return;
-		this.inputElem.blur();
-	};
-	Acts.prototype.SetCSSStyle = function (p, v)
-	{
-		if (this.runtime.isDomFree)
-			return;
-		jQuery(this.elem).css(p, v);
-	};
-	Acts.prototype.SetChecked = function (c)
-	{
-		if (this.runtime.isDomFree || !this.isCheckbox)
-			return;
-		this.inputElem.checked = (c === 1);
-	};
-	Acts.prototype.ToggleChecked = function ()
-	{
-		if (this.runtime.isDomFree || !this.isCheckbox)
-			return;
-		this.inputElem.checked = !this.inputElem.checked;
-	};
-	pluginProto.acts = new Acts();
-	function Exps() {};
-	pluginProto.exps = new Exps();
-}());
-;
-;
 cr.plugins_.Function = function(runtime)
 {
 	this.runtime = runtime;
@@ -16434,6 +16475,2422 @@ cr.plugins_.Function = function(runtime)
 		ret.set_any(fs.retVal);
 	};
 	pluginProto.exps = new Exps();
+}());
+;
+;
+cr.plugins_.NinePatch = function(runtime)
+{
+	this.runtime = runtime;
+};
+(function ()
+{
+	var pluginProto = cr.plugins_.NinePatch.prototype;
+	pluginProto.Type = function(plugin)
+	{
+		this.plugin = plugin;
+		this.runtime = plugin.runtime;
+	};
+	var typeProto = pluginProto.Type.prototype;
+	typeProto.onCreate = function()
+	{
+		if (this.is_family)
+			return;
+		this.texture_img = new Image();
+		this.texture_img.cr_filesize = this.texture_filesize;
+		this.runtime.waitForImageLoad(this.texture_img, this.texture_file);
+		this.fillPattern = null;
+		this.leftPattern = null;
+		this.rightPattern = null;
+		this.topPattern = null;
+		this.bottomPattern = null;
+		this.webGL_texture = null;
+		this.webGL_fillTexture = null;
+		this.webGL_leftTexture = null;
+		this.webGL_rightTexture = null;
+		this.webGL_topTexture = null;
+		this.webGL_bottomTexture = null;
+	};
+	typeProto.onLostWebGLContext = function ()
+	{
+		if (this.is_family)
+			return;
+		this.webGL_texture = null;
+		this.webGL_fillTexture = null;
+		this.webGL_leftTexture = null;
+		this.webGL_rightTexture = null;
+		this.webGL_topTexture = null;
+		this.webGL_bottomTexture = null;
+	};
+	typeProto.onRestoreWebGLContext = function ()
+	{
+		if (this.is_family || !this.instances.length)
+			return;
+		if (!this.webGL_texture)
+		{
+			this.webGL_texture = this.runtime.glwrap.loadTexture(this.texture_img, true, this.runtime.linearSampling, this.texture_pixelformat);
+		}
+	};
+	typeProto.unloadTextures = function ()
+	{
+		if (this.is_family || this.instances.length)
+			return;
+		if (this.runtime.glwrap)
+		{
+			this.runtime.glwrap.deleteTexture(this.webGL_texture);
+			this.runtime.glwrap.deleteTexture(this.webGL_fillTexture);
+			this.runtime.glwrap.deleteTexture(this.webGL_leftTexture);
+			this.runtime.glwrap.deleteTexture(this.webGL_rightTexture);
+			this.runtime.glwrap.deleteTexture(this.webGL_topTexture);
+			this.runtime.glwrap.deleteTexture(this.webGL_bottomTexture);
+			this.webGL_texture = null;
+			this.webGL_fillTexture = null;
+			this.webGL_leftTexture = null;
+			this.webGL_rightTexture = null;
+			this.webGL_topTexture = null;
+			this.webGL_bottomTexture = null;
+		}
+	};
+	typeProto.slicePatch = function (x1, y1, x2, y2)
+	{
+		var tmpcanvas = document.createElement("canvas");
+		var w = x2 - x1;
+		var h = y2 - y1;
+		tmpcanvas.width = w;
+		tmpcanvas.height = h;
+		var tmpctx = tmpcanvas.getContext("2d");
+		tmpctx.drawImage(this.texture_img, x1, y1, w, h, 0, 0, w, h);
+		return tmpcanvas;
+	};
+	typeProto.createPatch = function (lm, rm, tm, bm)
+	{
+		var iw = this.texture_img.width;
+		var ih = this.texture_img.height;
+		var re = iw - rm;
+		var be = ih - bm;
+		if (this.runtime.glwrap)
+		{
+			if (this.webGL_fillTexture)
+				return;		// already created
+			var glwrap = this.runtime.glwrap;
+			var ls = this.runtime.linearSampling;
+			var tf = this.texture_pixelformat;
+			if (re > lm && be > tm)
+				this.webGL_fillTexture = glwrap.loadTexture(this.slicePatch(lm, tm, re, be), true, ls, tf);
+			if (lm > 0 && be > tm)
+				this.webGL_leftTexture = glwrap.loadTexture(this.slicePatch(0, tm, lm, be), true, ls, tf, "repeat-y");
+			if (rm > 0 && be > tm)
+				this.webGL_rightTexture = glwrap.loadTexture(this.slicePatch(re, tm, iw, be), true, ls, tf, "repeat-y");
+			if (tm > 0 && re > lm)
+				this.webGL_topTexture = glwrap.loadTexture(this.slicePatch(lm, 0, re, tm), true, ls, tf, "repeat-x");
+			if (bm > 0 && re > lm)
+				this.webGL_bottomTexture = glwrap.loadTexture(this.slicePatch(lm, be, re, ih), true, ls, tf, "repeat-x");
+		}
+		else
+		{
+			if (this.fillPattern)
+				return;		// already created
+			var ctx = this.runtime.ctx;
+			if (re > lm && be > tm)
+				this.fillPattern = ctx.createPattern(this.slicePatch(lm, tm, re, be), "repeat");
+			if (lm > 0 && be > tm)
+				this.leftPattern = ctx.createPattern(this.slicePatch(0, tm, lm, be), "repeat");
+			if (rm > 0 && be > tm)
+				this.rightPattern = ctx.createPattern(this.slicePatch(re, tm, iw, be), "repeat");
+			if (tm > 0 && re > lm)
+				this.topPattern = ctx.createPattern(this.slicePatch(lm, 0, re, tm), "repeat");
+			if (bm > 0 && re > lm)
+				this.bottomPattern = ctx.createPattern(this.slicePatch(lm, be, re, ih), "repeat");
+		}
+	};
+	pluginProto.Instance = function(type)
+	{
+		this.type = type;
+		this.runtime = type.runtime;
+	};
+	var instanceProto = pluginProto.Instance.prototype;
+	instanceProto.onCreate = function()
+	{
+		this.leftMargin = this.properties[0];
+		this.rightMargin = this.properties[1];
+		this.topMargin = this.properties[2];
+		this.bottomMargin = this.properties[3];
+		this.edges = this.properties[4];					// 0=tile, 1=stretch
+		this.fill = this.properties[5];						// 0=tile, 1=stretch, 2=transparent
+		this.visible = (this.properties[6] === 0);			// 0=visible, 1=invisible
+		this.seamless = (this.properties[8] !== 0);			// 1px overdraw to hide seams
+		if (this.recycled)
+			this.rcTex.set(0, 0, 0, 0);
+		else
+			this.rcTex = new cr.rect(0, 0, 0, 0);
+		if (this.runtime.glwrap)
+		{
+			if (!this.type.webGL_texture)
+			{
+				this.type.webGL_texture = this.runtime.glwrap.loadTexture(this.type.texture_img, false, this.runtime.linearSampling, this.type.texture_pixelformat);
+			}
+		}
+		this.type.createPatch(this.leftMargin, this.rightMargin, this.topMargin, this.bottomMargin);
+	};
+	function drawPatternProperly(ctx, pattern, pw, ph, drawX, drawY, w, h, ox, oy)
+	{
+		ctx.save();
+		ctx.fillStyle = pattern;
+		var offX = drawX % pw;
+		var offY = drawY % ph;
+		if (offX < 0)
+			offX += pw;
+		if (offY < 0)
+			offY += ph;
+		ctx.translate(offX + ox, offY + oy);
+		ctx.fillRect(drawX - offX - ox, drawY - offY - oy, w, h);
+		ctx.restore();
+	};
+	instanceProto.draw = function(ctx)
+	{
+		var img = this.type.texture_img;
+		var lm = this.leftMargin;
+		var rm = this.rightMargin;
+		var tm = this.topMargin;
+		var bm = this.bottomMargin;
+		var iw = img.width;
+		var ih = img.height;
+		var re = iw - rm;
+		var be = ih - bm;
+		ctx.globalAlpha = this.opacity;
+		ctx.save();
+		var myx = this.x;
+		var myy = this.y;
+		var myw = this.width;
+		var myh = this.height;
+		if (this.runtime.pixel_rounding)
+		{
+			myx = Math.round(myx);
+			myy = Math.round(myy);
+		}
+		var drawX = -(this.hotspotX * this.width);
+		var drawY = -(this.hotspotY * this.height);
+		var offX = drawX % iw;
+		var offY = drawY % ih;
+		if (offX < 0)
+			offX += iw;
+		if (offY < 0)
+			offY += ih;
+		ctx.translate(myx + offX, myy + offY);
+		var x = drawX - offX;
+		var y = drawY - offY;
+		var s = (this.seamless ? 1 : 0);
+		if (lm > 0 && tm > 0)
+			ctx.drawImage(img, 0, 0, lm + s, tm + s, x, y, lm + s, tm + s);
+		if (rm > 0 && tm > 0)
+			ctx.drawImage(img, re - s, 0, rm + s, tm + s, x + myw - rm - s, y, rm + s, tm + s);
+		if (rm > 0 && bm > 0)
+			ctx.drawImage(img, re - s, be - s, rm + s, bm + s, x + myw - rm - s, y + myh - bm - s, rm + s, bm + s);
+		if (lm > 0 && bm > 0)
+			ctx.drawImage(img, 0, be - s, lm + s, bm + s, x, y + myh - bm - s, lm + s, bm + s);
+		if (this.edges === 0)		// tile edges
+		{
+			var off = (this.fill === 2 ? 0 : s);
+			if (lm > 0 && be > tm)
+				drawPatternProperly(ctx, this.type.leftPattern, lm, be - tm, x, y + tm, lm + off, myh - tm - bm, 0, 0);
+			if (rm > 0 && be > tm)
+				drawPatternProperly(ctx, this.type.rightPattern, rm, be - tm, x + myw - rm - off, y + tm, rm + off, myh - tm - bm, off, 0);
+			if (tm > 0 && re > lm)
+				drawPatternProperly(ctx, this.type.topPattern, re - lm, tm, x + lm, y, myw - lm - rm, tm + off, 0, 0);
+			if (bm > 0 && re > lm)
+				drawPatternProperly(ctx, this.type.bottomPattern, re - lm, bm, x + lm, y + myh - bm - off, myw - lm - rm, bm + off, 0, off);
+		}
+		else if (this.edges === 1)	// stretch edges
+		{
+			if (lm > 0 && be > tm && myh - tm - bm > 0)
+				ctx.drawImage(img, 0, tm, lm, be - tm, x, y + tm, lm, myh - tm - bm);
+			if (rm > 0 && be > tm && myh - tm - bm > 0)
+				ctx.drawImage(img, re, tm, rm, be - tm, x + myw - rm, y + tm, rm, myh - tm - bm);
+			if (tm > 0 && re > lm && myw - lm - rm > 0)
+				ctx.drawImage(img, lm, 0, re - lm, tm, x + lm, y, myw - lm - rm, tm);
+			if (bm > 0 && re > lm && myw - lm - rm > 0)
+				ctx.drawImage(img, lm, be, re - lm, bm, x + lm, y + myh - bm, myw - lm - rm, bm);
+		}
+		if (be > tm && re > lm)
+		{
+			if (this.fill === 0)		// tile fill
+			{
+				drawPatternProperly(ctx, this.type.fillPattern, re - lm, be - tm, x + lm, y + tm, myw - lm - rm, myh - tm - bm, 0, 0);
+			}
+			else if (this.fill === 1)	// stretch fill
+			{
+				if (myw - lm - rm > 0 && myh - tm - bm > 0)
+				{
+					ctx.drawImage(img, lm, tm, re - lm, be - tm, x + lm, y + tm, myw - lm - rm, myh - tm - bm);
+				}
+			}
+		}
+		ctx.restore();
+	};
+	instanceProto.drawPatch = function(glw, tex, sx, sy, sw, sh, dx, dy, dw, dh)
+	{
+		glw.setTexture(tex);
+		var rcTex = this.rcTex;
+		rcTex.left = sx / tex.c2width;
+		rcTex.top = sy / tex.c2height;
+		rcTex.right = (sx + sw) / tex.c2width;
+		rcTex.bottom = (sy + sh) / tex.c2height;
+		glw.quadTex(dx, dy, dx + dw, dy, dx + dw, dy + dh, dx, dy + dh, rcTex);
+	};
+	instanceProto.tilePatch = function(glw, tex, dx, dy, dw, dh, ox, oy)
+	{
+		glw.setTexture(tex);
+		var rcTex = this.rcTex;
+		rcTex.left = -ox / tex.c2width;
+		rcTex.top = -oy / tex.c2height;
+		rcTex.right = (dw - ox) / tex.c2width;
+		rcTex.bottom = (dh - oy) / tex.c2height;
+		glw.quadTex(dx, dy, dx + dw, dy, dx + dw, dy + dh, dx, dy + dh, rcTex);
+	};
+	instanceProto.drawGL_earlyZPass = function(glw)
+	{
+		this.drawGL(glw);
+	};
+	instanceProto.drawGL = function(glw)
+	{
+		var lm = this.leftMargin;
+		var rm = this.rightMargin;
+		var tm = this.topMargin;
+		var bm = this.bottomMargin;
+		var iw = this.type.texture_img.width;
+		var ih = this.type.texture_img.height;
+		var re = iw - rm;
+		var be = ih - bm;
+		glw.setOpacity(this.opacity);
+		var rcTex = this.rcTex;
+		var q = this.bquad;
+		var myx = q.tlx;
+		var myy = q.tly;
+		var myw = this.width;
+		var myh = this.height;
+		if (this.runtime.pixel_rounding)
+		{
+			myx = Math.round(myx);
+			myy = Math.round(myy);
+		}
+		var s = (this.seamless ? 1 : 0);
+		if (lm > 0 && tm > 0)
+			this.drawPatch(glw, this.type.webGL_texture, 0, 0, lm + s, tm + s, myx, myy, lm + s, tm + s);
+		if (rm > 0 && tm > 0)
+			this.drawPatch(glw, this.type.webGL_texture, re - s, 0, rm + s, tm + s, myx + myw - rm - s, myy, rm + s, tm + s);
+		if (rm > 0 && bm > 0)
+			this.drawPatch(glw, this.type.webGL_texture, re - s, be - s, rm + s, bm + s, myx + myw - rm - s, myy + myh - bm - s, rm + s, bm + s);
+		if (lm > 0 && bm > 0)
+			this.drawPatch(glw, this.type.webGL_texture, 0, be - s, lm + s, bm + s, myx, myy + myh - bm - s, lm + s, bm + s);
+		if (this.edges === 0)		// tile edges
+		{
+			var off = (this.fill === 2 ? 0 : s);
+			if (lm > 0 && be > tm)
+				this.tilePatch(glw, this.type.webGL_leftTexture, myx, myy + tm, lm + off, myh - tm - bm, 0, 0);
+			if (rm > 0 && be > tm)
+				this.tilePatch(glw, this.type.webGL_rightTexture, myx + myw - rm - off, myy + tm, rm + off, myh - tm - bm, off, 0);
+			if (tm > 0 && re > lm)
+				this.tilePatch(glw, this.type.webGL_topTexture, myx + lm, myy, myw - lm - rm, tm + off, 0, 0);
+			if (bm > 0 && re > lm)
+				this.tilePatch(glw, this.type.webGL_bottomTexture, myx + lm, myy + myh - bm - off, myw - lm - rm, bm + off, 0, off);
+		}
+		else if (this.edges === 1)	// stretch edges
+		{
+			if (lm > 0 && be > tm)
+				this.drawPatch(glw, this.type.webGL_texture, 0, tm, lm, be - tm, myx, myy + tm, lm, myh - tm - bm);
+			if (rm > 0 && be > tm)
+				this.drawPatch(glw, this.type.webGL_texture, re, tm, rm, be - tm, myx + myw - rm, myy + tm, rm, myh - tm - bm);
+			if (tm > 0 && re > lm)
+				this.drawPatch(glw, this.type.webGL_texture, lm, 0, re - lm, tm, myx + lm, myy, myw - lm - rm, tm);
+			if (bm > 0 && re > lm)
+				this.drawPatch(glw, this.type.webGL_texture, lm, be, re - lm, bm, myx + lm, myy + myh - bm, myw - lm - rm, bm);
+		}
+		if (be > tm && re > lm)
+		{
+			if (this.fill === 0)		// tile fill
+			{
+				this.tilePatch(glw, this.type.webGL_fillTexture, myx + lm, myy + tm, myw - lm - rm, myh - tm - bm, 0, 0);
+			}
+			else if (this.fill === 1)	// stretch fill
+			{
+				this.drawPatch(glw, this.type.webGL_texture, lm, tm, re - lm, be - tm, myx + lm, myy + tm, myw - lm - rm, myh - tm - bm);
+			}
+		}
+	};
+	function Cnds() {};
+	Cnds.prototype.OnURLLoaded = function ()
+	{
+		return true;
+	};
+	pluginProto.cnds = new Cnds();
+	function Acts() {};
+	Acts.prototype.SetEffect = function (effect)
+	{
+		this.blend_mode = effect;
+		this.compositeOp = cr.effectToCompositeOp(effect);
+		cr.setGLBlend(this, effect, this.runtime.gl);
+		this.runtime.redraw = true;
+	};
+	pluginProto.acts = new Acts();
+	function Exps() {};
+	pluginProto.exps = new Exps();
+}());
+;
+;
+cr.plugins_.Rex_Comment = function(runtime)
+{
+	this.runtime = runtime;
+};
+(function ()
+{
+	var pluginProto = cr.plugins_.Rex_Comment.prototype;
+	pluginProto.Type = function(plugin)
+	{
+		this.plugin = plugin;
+		this.runtime = plugin.runtime;
+	};
+	var typeProto = pluginProto.Type.prototype;
+	typeProto.onCreate = function()
+	{
+	};
+	pluginProto.Instance = function(type)
+	{
+		this.type = type;
+		this.runtime = type.runtime;
+	};
+	var instanceProto = pluginProto.Instance.prototype;
+	instanceProto.onCreate = function()
+	{
+	};
+	instanceProto.onDestroy = function ()
+	{
+	};
+	function Cnds() {};
+	pluginProto.cnds = new Cnds();
+	Cnds.prototype.NOOP = function ()
+	{
+		return true;
+	};
+	function Acts() {};
+	pluginProto.acts = new Acts();
+    Acts.prototype.NOOP = function ()
+	{
+	};
+	function Exps() {};
+	pluginProto.exps = new Exps();
+}());
+;
+;
+cr.plugins_.Rex_Container = function (runtime) {
+	this.runtime = runtime;
+};
+cr.plugins_.Rex_Container.tag2container = {};
+(function () {
+	var pluginProto = cr.plugins_.Rex_Container.prototype;
+	pluginProto.onCreate = function () {
+		pluginProto.acts.Destroy = function () {
+			this.runtime.DestroyInstance(this);
+			delete cr.plugins_.Rex_Container.tag2container[this.tag];
+			this.destoryAllPinInstances();
+		};
+	};
+	pluginProto.Type = function (plugin) {
+		this.plugin = plugin;
+		this.runtime = plugin.runtime;
+	};
+	var typeProto = pluginProto.Type.prototype;
+	typeProto.onCreate = function () {};
+	pluginProto.Instance = function (type) {
+		this.type = type;
+		this.runtime = type.runtime;
+	};
+	var instanceProto = pluginProto.Instance.prototype;
+	instanceProto.onCreate = function () {
+		this.check_name = "CONTAINER";
+		this._uids = {};
+		this.pin_mode = this.properties[0];
+		this.tag = this.properties[2];
+		cr.plugins_.Rex_Container.tag2container[this.tag] = this;
+		this.pin_status = {};
+		this.runtime.tick2Me(this);
+		this._width_save = this.width;
+		this._height_save = this.height;
+		this._opactiy_save = this.opacity;
+		this._visible_save = this.visible;
+		this._original_width = this.width;
+		this._original_height = this.height;
+	};
+	instanceProto.onDestroy = function () {
+	};
+	instanceProto._update_size = function () {
+		if ((this._width_save == this.width) && (this._height_save == this.height))
+			return;
+		var width_factor = (this.width > 0) ? (this.width / this._width_save) : 0;
+		var height_factor = (this.height > 0) ? (this.height / this._height_save) : 0;
+		var factor = Math.min(width_factor, height_factor);
+		var uid, inst, status;
+		for (uid in this._uids) {
+			inst = this._uid2inst(uid);
+			if (inst == null)
+				continue;
+			if (inst.width != null)
+				inst.width *= factor;
+			if (inst.height != null)
+				inst.height *= factor;
+			inst.set_bbox_changed();
+		}
+		for (uid in this.pin_status) {
+			inst = this._uid2inst(uid);
+			if (inst == null)
+				continue;
+			status = this.pin_status[uid];
+			status["dd"] *= factor;
+		}
+		this.runtime.redraw = true;
+		this._width_save = this.width;
+		this._height_save = this.height;
+	};
+	instanceProto._update_opacity = function () {
+		if (this._opactiy_save == this.opacity)
+			return;
+		var uid, inst;
+		this.opacity = cr.clamp(this.opacity, 0, 1);
+		for (uid in this._uids) {
+			inst = this._uid2inst(uid);
+			if (inst == null)
+				continue;
+			if (inst.opacity != null)
+				inst.opacity = this.opacity;
+		}
+		this.runtime.redraw = true;
+		this._opactiy_save = this.opacity;
+	};
+	instanceProto._update_visible = function () {
+		if (this._visible_save == this.visible)
+			return;
+		var uid, inst;
+		for (uid in this._uids) {
+			inst = this._uid2inst(uid);
+			if (inst == null)
+				continue;
+			if (inst.visible != null)
+				inst.visible = this.visible;
+		}
+		this.runtime.redraw = true;
+		this._visible_save = this.visible;
+	};
+	instanceProto._update_position_angle = function () {
+		if (this.pin_mode == 0)
+			return;
+		var uid, status, pin_inst, a, new_x, new_y, new_angle;
+		for (uid in this.pin_status) {
+			pin_inst = this._uid2inst(uid);
+			if (pin_inst == null)
+				continue;
+			status = this.pin_status[uid];
+			if ((this.pin_mode == 1) || (this.pin_mode == 2)) {
+				a = this.angle + status["da"];
+				new_x = this.x + (status["dd"] * Math.cos(a));
+				new_y = this.y + (status["dd"] * Math.sin(a));
+			}
+			if ((this.pin_mode == 1) || (this.pin_mode == 3)) {
+				new_angle = status["rda"] + this.angle;
+			}
+			if (((new_x != null) && (new_y != null)) &&
+				((new_x != pin_inst.x) || (new_y != pin_inst.y))) {
+				pin_inst.x = new_x;
+				pin_inst.y = new_y;
+				pin_inst.set_bbox_changed();
+			}
+			if ((new_angle != null) && (new_angle != pin_inst.angle)) {
+				pin_inst.angle = new_angle;
+				pin_inst.set_bbox_changed();
+			}
+		}
+	};
+	instanceProto.tick2 = function () {
+		if (is_hash_empty(this.pin_status))
+			return;
+		this._update_size();
+		this._update_opacity();
+		this._update_visible();
+		this._update_position_angle();
+	};
+	instanceProto.draw = function (ctx) {};
+	instanceProto.drawGL = function (glw) {};
+	instanceProto.addInsts = function (insts) {
+		var inst, i, cnt = insts.length;
+		var is_world = insts[0].type.plugin.is_world;
+		for (i = 0; i < cnt; i++) {
+			inst = insts[i];
+			if (this._uids[inst.uid]) // is inside container
+				continue;
+			inst.extra["rex_container_uid"] = this.uid;
+			this._uids[inst.uid] = true;
+			if (is_world && (this.pin_mode != 0)) {
+				this.pin_inst(inst);
+			}
+		}
+	};
+	instanceProto.pin_inst = function (inst) {
+		if (this.pin_status[inst.uid] != null) {
+			this.pin_status[inst.uid]["da"] = cr.angleTo(this.x, this.y, inst.x, inst.y) - this.angle;
+			this.pin_status[inst.uid]["dd"] = cr.distanceTo(this.x, this.y, inst.x, inst.y);
+			this.pin_status[inst.uid]["rda"] = inst.angle - this.angle;
+		} else {
+			this.pin_status[inst.uid] = {
+				"da": cr.angleTo(this.x, this.y, inst.x, inst.y) - this.angle,
+				"dd": cr.distanceTo(this.x, this.y, inst.x, inst.y),
+				"rda": inst.angle - this.angle,
+			};
+		}
+	};
+	instanceProto.create_insts = function (obj_type, x, y, layer) {
+		if (obj_type == null)
+			return;
+		var inst = this.runtime.createInstance(obj_type, layer, x, y);
+		var sol = inst.type.getCurrentSol();
+		sol.select_all = false;
+		sol.instances.length = 1;
+		sol.instances[0] = inst;
+		var i, len, s;
+		if (inst.is_contained) {
+			for (i = 0, len = inst.siblings.length; i < len; i++) {
+				s = inst.siblings[i];
+				sol = s.type.getCurrentSol();
+				sol.select_all = false;
+				sol.instances.length = 1;
+				sol.instances[0] = s;
+			}
+		}
+		this.addInsts([inst]);
+		return inst;
+	};
+	instanceProto._remove_uid = function (uid) {
+		if (uid in this._uids)
+			delete this._uids[uid];
+		else
+			return;
+		if (uid in this.pin_inst)
+			delete this.pin_inst[uid];
+	};
+	instanceProto.remove_insts = function (insts) {
+		var i, cnt = insts.length;
+		for (i = 0; i < cnt; i++) {
+			this._remove_uid(insts[i].uid);
+		}
+	};
+	instanceProto._uid2inst = function (uid, objtype) {
+		if (uid == null)
+			return null;
+		var inst = this.runtime.getObjectByUID(uid);
+		if (inst == null) {
+			this._remove_uid(uid);
+			return null;
+		}
+		if ((objtype == null) || (inst.type == objtype))
+			return inst;
+		else if (objtype.is_family) {
+			var families = inst.type.families;
+			var cnt = families.length,
+				i;
+			for (i = 0; i < cnt; i++) {
+				if (objtype == families[i])
+					return inst;
+			}
+		}
+		return null;
+	};
+	instanceProto._pick_insts = function (objtype) {
+		var sol = objtype.getCurrentSol();
+		sol.select_all = false;
+		sol.instances.length = 0; // clear contents
+		var uid, inst;
+		for (uid in this._uids) {
+			inst = this._uid2inst(uid, objtype)
+			if (inst != null)
+				sol.instances.push(inst);
+		}
+		objtype.applySolToContainer();
+		return (sol.instances.length > 0);
+	};
+	var name2type = {}; // private global object
+	instanceProto._pick_all_insts = function () {
+		var uid, inst, objtype, sol;
+		var uids = this._uids;
+		hash_clean(name2type);
+		var has_inst = false;
+		for (uid in uids) {
+			inst = this._uid2inst(uid);
+			if (inst == null)
+				continue;
+			objtype = inst.type;
+			sol = objtype.getCurrentSol();
+			if (!(objtype.name in name2type)) {
+				sol.select_all = false;
+				sol.instances.length = 0;
+				name2type[objtype.name] = objtype;
+			}
+			sol.instances.push(inst);
+			has_inst = true;
+		}
+		var name;
+		for (name in name2type)
+			name2type[name].applySolToContainer();
+		hash_clean(name2type);
+		return has_inst;
+	};
+	instanceProto.destoryAllPinInstances = function () {
+		var uid, inst;
+		for (uid in this._uids) {
+			inst = this.runtime.getObjectByUID(uid);
+			if (inst != null) {
+				Object.getPrototypeOf(inst.type.plugin).acts.Destroy.call(inst);
+			}
+		}
+	};
+	var hash_clean = function (obj) {
+		var k;
+		for (k in obj)
+			delete obj[k];
+	};
+	var is_hash_empty = function (obj) {
+		var k;
+		for (k in obj) {
+			return false;
+		}
+		return true;
+	};
+	instanceProto.saveToJSON = function () {
+		return {
+			"uids": this._uids,
+			"ps": this.pin_status,
+		};
+	};
+	instanceProto.loadFromJSON = function (o) {
+		this._uids = o["uids"];
+		this.pin_status = o["ps"];
+	};
+	function Cnds() {};
+	pluginProto.cnds = new Cnds();
+	Cnds.prototype.PickInsts = function (objtype) {
+		return this._pick_insts(objtype);
+	};
+	Cnds.prototype.PickContainer = function (objtype) {
+		if (!objtype)
+			return;
+		var insts = objtype.getCurrentSol().getObjects();
+		var cnt = insts.length;
+		if (cnt == 0)
+			return false;
+		var container_type = this.runtime.getCurrentCondition().type;
+		var container_sol = container_type.getCurrentSol();
+		container_sol.select_all = false;
+		container_sol.instances.length = 0;
+		var i, container_uid, container_inst;
+		var uids = {};
+		for (i = 0; i < cnt; i++) {
+			container_uid = insts[i].extra["rex_container_uid"];
+			if (container_uid in uids)
+				continue;
+			container_inst = this.runtime.getObjectByUID(container_uid);
+			if (container_inst == null)
+				continue;
+			container_sol.instances.push(container_inst);
+			uids[container_uid] = true;
+		}
+		var current_event = this.runtime.getCurrentEventStack().current_event;
+		this.runtime.pushCopySol(current_event.solModifiers);
+		current_event.retrigger();
+		this.runtime.popSol(current_event.solModifiers);
+		return false;
+	};
+	Cnds.prototype.PickAllInsts = function () {
+		return this._pick_all_insts();
+	};
+	function Acts() {};
+	pluginProto.acts = new Acts();
+	Acts.prototype.AddInsts = function (objtype) {
+		var insts = objtype.getCurrentSol().getObjects();
+		if (insts.length == 0)
+			return;
+		this.addInsts(insts);
+	};
+	Acts.prototype.PickInsts = function (objtype) {
+		this._pick_insts(objtype);
+	};
+	Acts.prototype.PickAllInsts = function () {
+		this._pick_all_insts();
+	};
+	Acts.prototype.CreateInsts = function (obj_type, x, y, _layer) {
+		this.create_insts(obj_type, x, y, _layer);
+	};
+	Acts.prototype.RemoveInsts = function (objtype) {
+		var insts = objtype.getCurrentSol().getObjects();
+		if (insts.length == 0)
+			return;
+		this.remove_insts(insts);
+	};
+	Acts.prototype.ContainerDestroy = function () {
+		this.destoryAllPinInstances();
+		this.runtime.DestroyInstance(this);
+	};
+	Acts.prototype.SetScale = function (s) {
+		var new_width = this._original_width * s;
+		var new_height = this._original_height * s;
+		if (this.width !== new_width || this.height !== new_height) {
+			this.width = new_width;
+			this.height = new_height;
+			this.set_bbox_changed();
+		}
+	};
+	function Exps() {};
+	pluginProto.exps = new Exps();
+	Exps.prototype.Tag = function (ret) {
+		ret.set_string(this.tag);
+	};
+	Exps.prototype.ImagePointX = function (ret, imgpt) {
+		ret.set_float(0);
+	};
+	Exps.prototype.ImagePointY = function (ret, imgpt) {
+		ret.set_float(0);
+	};
+}());
+;
+;
+cr.plugins_.Rex_GridCtrl = function(runtime)
+{
+	this.runtime = runtime;
+};
+(function ()
+{
+	var pluginProto = cr.plugins_.Rex_GridCtrl.prototype;
+	pluginProto.onCreate = function ()
+	{
+		pluginProto.acts.Destroy = function ()
+		{
+			this.runtime.DestroyInstance(this);
+            this.set_cells_count(0);
+		};
+	};
+	pluginProto.Type = function(plugin)
+	{
+		this.plugin = plugin;
+		this.runtime = plugin.runtime;
+	};
+	var typeProto = pluginProto.Type.prototype;
+	typeProto.onCreate = function()
+	{
+	};
+	pluginProto.Instance = function(type)
+	{
+		this.type = type;
+		this.runtime = type.runtime;
+	};
+	var instanceProto = pluginProto.Instance.prototype;
+	instanceProto.onCreate = function()
+	{
+	    this.lines_mgr = new cr.plugins_.Rex_GridCtrl.LinesMgrKlass(this);
+	    this.is_vertical_scrolling = (this.properties[6] === 1);
+	    this.is_clamp_OXY = (this.properties[5] === 1);
+        this.lines_mgr.SetDefaultLineHeight(this.properties[1]);
+        this.lines_mgr.SetDefaultLineWidth(this.properties[2]);
+	    this.lines_mgr.SetLinesCount(this.properties[3]);
+        this.lines_mgr.SetColNum(this.properties[4]);
+	    this.update_flag = true;
+	    this.OY = 0;
+	    this.OX = 0;
+        this.visibleLineIndexes = {};
+        this.pre_visibleLineIndexes = {};
+        this.visibleX_start = 0;
+        this.visibleX_end = 0;
+        this.visibleY_start = 0;
+        this.visibleY_end = 0;
+        this.pre_instX = this.x;
+        this.pre_instY = this.y;
+        this.pre_instHeight = this.get_inst_height();
+        this.pre_instWidth = this.get_inst_width();
+        this.is_out_top_bound = false;
+        this.is_out_bottom_bound = false;
+        this.is_out_left_bound = false;
+        this.is_out_right_bound = false;
+        this.bound_type = null;
+        this.exp_CellIndex = 0;
+        this.exp_CellTLX = 0;
+        this.exp_CellTLY = 0;
+        this.exp_LastRemovedLines = "";
+        this.exp_LastBoundOY = 0;
+        this.exp_LastBoundOX = 0;
+        this.runtime.tick2Me(this);
+        this.lines_mgr_save = null;  // save / load
+	};
+	instanceProto.draw = function(ctx)
+	{
+	};
+	instanceProto.drawGL = function(glw)
+	{
+	};
+    instanceProto.tick2 = function()
+    {
+        var cur_instHeight = this.get_inst_height();
+        var cur_instWidth = this.get_inst_width();
+        var is_heightChanged = (this.pre_instHeight !== cur_instHeight);
+        var is_widthChanged = (this.pre_instWidth !== cur_instWidth);
+        var is_XChanged = (this.pre_instX !== this.x);
+        var is_YChanged = (this.pre_instY !== this.y);
+        var is_areaChange = is_heightChanged || is_widthChanged || is_XChanged || is_YChanged;
+        if (is_areaChange)
+            this.update_flag = true;
+        if (!this.update_flag)
+            return;
+        this.update();
+        this.pre_instX = this.x;
+        this.pre_instY = this.y;
+        this.pre_instHeight = cur_instHeight;
+        this.pre_instWidth = cur_instWidth;
+    };
+	instanceProto.onDestroy = function ()
+	{
+	};
+	instanceProto.get_inst_height = function()
+	{
+	    return (this.is_vertical_scrolling)? this.height : this.width;
+	};
+	instanceProto.get_inst_width = function()
+	{
+	    return (this.is_vertical_scrolling)? this.width : this.height;
+	};
+    instanceProto.update = function(refresh)
+    {
+        this.update_flag = false;
+        if (refresh)
+        {
+            this.prepare();
+            this.hide_lines();
+        }
+        this.prepare();
+        this.show_lines();
+        this.hide_lines();
+        this.exp_CellIndex = -1;
+    };
+    instanceProto.prepare = function()
+    {
+        var tmp = this.pre_visibleLineIndexes;
+        this.pre_visibleLineIndexes = this.visibleLineIndexes;
+        this.visibleLineIndexes = tmp;
+        clean_table(this.visibleLineIndexes);
+    };
+    instanceProto.show_lines = function()
+    {
+        var row_index = this.lines_mgr.Height2RawIndex( -this.OY );
+        if (row_index < 0)
+            row_index = 0;
+        var col_index = this.lines_mgr.Width2ColIndex( -this.OX );
+        if (col_index < 0)
+            col_index = 0;
+        var line_index = this.lines_mgr.XY2LineIndex(col_index, row_index);
+        var bottom_bound = this.get_bottom_bound();
+        var right_bound = this.get_right_bound();
+        var last_index = this.lines_mgr.GetLinesCount() -1;
+        var last_colIndex = this.lines_mgr.colNum -1;
+        var line;
+        this.visibleY_start = null;
+        this.visibleY_end = null;
+        this.visibleX_start = null;
+        this.visibleX_end = null;
+        var line_tlx0=this.get_tlX(col_index), line_tlx=line_tlx0;
+        var line_tly=this.get_tlY(row_index);
+        while ((line_tly < bottom_bound) && (line_index <= last_index))
+        {
+            if (this.lines_mgr.IsInRange(line_index))
+            {
+                if (this.visibleY_start === null)
+                {
+                    this.visibleY_start = row_index;
+                    this.visibleY_end = row_index;
+                }
+                if (this.visibleX_start === null)
+                {
+                    this.visibleX_start = col_index;
+                    this.visibleX_end = col_index;
+                }
+                if (this.visibleY_end < row_index)
+                    this.visibleY_end = row_index;
+                if (this.visibleX_end < col_index)
+                    this.visibleX_end = col_index;
+                this.visibleLineIndexes[line_index] = true;
+                line = this.lines_mgr.GetLine(line_index);
+                line.SetTLXY(line_tlx, line_tly);
+                if (this.pre_visibleLineIndexes.hasOwnProperty(line_index))
+                {
+                    line.PinInsts();
+                }
+                else
+                {
+                    this.show_line(line_index, line_tlx, line_tly);
+                }
+            }
+            line_tlx += this.lines_mgr.GetColWidth(col_index);
+            if ( (line_tlx < right_bound) && ( col_index < last_colIndex ) )
+            {
+                col_index += 1;
+            }
+            else
+            {
+                line_tlx=line_tlx0;
+                line_tly += this.lines_mgr.GetRowHeight(row_index);
+                col_index = this.visibleX_start;
+                row_index += 1;
+            }
+            line_index = this.lines_mgr.XY2LineIndex(col_index, row_index);
+        }
+    };
+    instanceProto.show_line = function(line_index, tlx, tly)
+    {
+        this.exp_CellIndex = line_index;
+        if (this.is_vertical_scrolling)
+        {
+            this.exp_CellTLX = tlx;
+            this.exp_CellTLY = tly;
+        }
+        else
+        {
+            this.exp_CellTLX = tly;
+            this.exp_CellTLY = tlx;
+        }
+        this.runtime.trigger(cr.plugins_.Rex_GridCtrl.prototype.cnds.OnCellVisible, this);
+    };
+    instanceProto.hide_lines = function()
+    {
+        var i, insts;
+        for (i in this.pre_visibleLineIndexes)
+        {
+            if (this.visibleLineIndexes.hasOwnProperty(i))
+                continue;
+            this.hide_line(i);
+        }
+    };
+    instanceProto.hide_line = function(line_index)
+    {
+        this.exp_CellIndex = parseInt(line_index);
+        this.runtime.trigger(cr.plugins_.Rex_GridCtrl.prototype.cnds.OnCellInvisible, this);
+        this.lines_mgr.DestroyPinedInsts(line_index);
+    };
+    instanceProto.get_tlX = function(col_index)
+    {
+        this.update_bbox();
+        var pox = (this.is_vertical_scrolling)? this.bquad.tlx : this.bquad.tly;
+        var px = this.OX + this.lines_mgr.ColIndex2Width(0, col_index-1) + pox;
+        return px;
+    };
+    instanceProto.get_tlY = function(row_index)
+    {
+        this.update_bbox();
+        var poy = (this.is_vertical_scrolling)? this.bquad.tly : this.bquad.tlx;
+        var py = this.OY +  this.lines_mgr.RowIndex2Height(0, row_index-1) + poy;
+        return py;
+    };
+    instanceProto.get_bottom_bound = function()
+    {
+        this.update_bbox();
+        return (this.is_vertical_scrolling)? this.bquad.bly : this.bquad.trx;
+    };
+    instanceProto.get_right_bound = function()
+    {
+        this.update_bbox();
+        return (this.is_vertical_scrolling)? this.bquad.trx : this.bquad.bly;
+    };
+	instanceProto.set_OY = function(oy)
+	{
+	    var is_out_top_bound = this.is_OY_out_bound(oy, 0);
+	    var is_out_bottom_bound = this.is_OY_out_bound(oy, 1);
+	    if (this.is_clamp_OXY)
+	    {
+	        var total_rows_cnt =this.lines_mgr.GetTotalRowsCnt();
+	        var visible_rows_cnt=this.lines_mgr.Height2RawIndex(this.get_inst_height(), true);
+	        if (total_rows_cnt < visible_rows_cnt)
+	            oy = 0;
+	        else if (oy > 0)
+	            oy = 0;
+	        else
+	        {
+	            var list_height = this.get_list_height();
+	            if (oy < -list_height)
+	                oy = -list_height;
+	        }
+	    }
+        if (this.OY !== oy )
+        {
+	        this.update_flag = true;
+	        this.OY = oy;
+        }
+	    if (is_out_top_bound && (!this.is_out_top_bound))
+	    {
+	        this.bound_type = 0;
+	        this.exp_LastBoundOY = 0;
+	        this.runtime.trigger(cr.plugins_.Rex_GridCtrl.prototype.cnds.OnOYOutOfBound, this);
+	        this.bound_type = null;
+	    }
+	    if (is_out_bottom_bound && !this.is_out_bottom_bound)
+	    {
+	        this.bound_type = 1;
+	        this.exp_LastBoundOY = -this.get_list_height();
+	        this.runtime.trigger(cr.plugins_.Rex_GridCtrl.prototype.cnds.OnOYOutOfBound, this);
+	        this.bound_type = null;
+	    }
+        this.is_out_top_bound = is_out_top_bound;
+        this.is_out_bottom_bound = is_out_bottom_bound;
+	};
+	instanceProto.set_OX = function(ox)
+	{
+	    var is_out_left_bound = this.is_OX_out_bound(ox, 0);
+	    var is_out_right_bound = this.is_OX_out_bound(ox, 1);
+	    if (this.is_clamp_OXY)
+	    {
+	        var total_rows_cnt = this.lines_mgr.colNum;
+            var visible_cols_cnt=this.lines_mgr.Width2ColIndex(this.get_inst_width(), true);
+	        if (total_rows_cnt < visible_cols_cnt)
+	            ox = 0;
+	        else if (ox > 0)
+	            ox = 0;
+	        else
+	        {
+	            var list_width = this.get_list_width();
+	            if (ox < -list_width)
+	                ox = -list_width;
+	        }
+	    }
+        if (this.OX !== ox )
+        {
+	        this.update_flag = true;
+	        this.OX = ox;
+        }
+	    if (is_out_left_bound && (!this.is_out_left_bound))
+	    {
+	        this.bound_type = 0;
+	        this.exp_LastBoundOX = 0;
+	        this.runtime.trigger(cr.plugins_.Rex_GridCtrl.prototype.cnds.OnOXOutOfBound, this);
+	        this.bound_type = null;
+	    }
+	    if (is_out_right_bound && !this.is_out_right_bound)
+	    {
+	        this.bound_type = 1;
+	        this.exp_LastBoundOX = -this.get_list_width();
+	        this.runtime.trigger(cr.plugins_.Rex_GridCtrl.prototype.cnds.OnOXOutOfBound, this);
+	        this.bound_type = null;
+	    }
+        this.is_out_left_bound = is_out_left_bound;
+        this.is_out_right_bound = is_out_right_bound;
+	};
+	instanceProto.is_visible = function(line_index)
+	{
+	    if (this.visibleY_start == null)
+	        return false;
+        var row_index = this.lines_mgr.LineIndex2RowIndex(line_index);
+        var col_index = this.lines_mgr.LineIndex2ColIndex(line_index);
+	    return (row_index >= this.visibleY_start) && (row_index <= this.visibleY_end) &&
+	               (col_index >= this.visibleX_start) && (col_index <= this.visibleX_end);
+	};
+	var NEWLINES = [];
+	var get_content = function (content)
+	{
+	    if (content === "")
+	        return null;
+	    if (typeof(content) === "string")
+	    {
+	        try {
+		    	return JSON.parse(content);
+		    }
+		    catch(e) { return null; }
+	    }
+	    else if (typeof(content) === "number")
+	    {
+	        NEWLINES.length = content;
+	        var i;
+	        for (i=0; i<content; i++)
+	            NEWLINES[i] = null;
+	        return NEWLINES;
+	    }
+	    else
+	        return content;
+	};
+    instanceProto.set_cells_count = function (cnt)
+	{
+	    if (cnt < 0)
+	        cnt = 0;
+	    var is_changed = this.lines_mgr.SetLinesCount(cnt);
+	    if (is_changed)
+            this.update_flag = true;
+	};
+    instanceProto.set_col_num = function (col, ignore_update)
+	{
+        var is_changed = this.lines_mgr.SetColNum(col);
+	    if (is_changed && !ignore_update)
+            this.update_flag = true;
+	};
+    instanceProto.insert_cells = function (line_index, content)
+	{
+	    content = get_content(content);
+	    if (content === null)
+	        return;
+	    var cnt = content.length;
+        if (this.is_visible(line_index))
+        {
+            var i;
+            for(i=0; i<cnt; i++)
+            {
+	            delete this.visibleLineIndexes[line_index + i];
+	            this.visibleLineIndexes[this.visibleY_end+1 + i] = true;
+	        }
+        }
+	    this.lines_mgr.InsertLines(line_index, content);
+	    this.update_flag = true;
+	};
+    instanceProto.remove_cells = function (line_index, cnt)
+	{
+	    var total_lines = this.lines_mgr.GetLinesCount();
+	    if ( (line_index + cnt) > total_lines)
+	        cnt = total_lines - line_index;
+        if (this.is_visible(line_index))
+        {
+            var i;
+            for(i=0; i<cnt; i++)
+            {
+                delete this.visibleLineIndexes[this.visibleY_end-i];
+            }
+        }
+	    var removed_lines = this.lines_mgr.RemoveLines(line_index, cnt);
+	    this.exp_LastRemovedLines = JSON.stringify( removed_lines );
+	    this.update_flag = true;
+	};
+    instanceProto.for_each_line = function (start_, end_, filter_fn)
+	{
+	    var total_lines = this.lines_mgr.GetLinesCount();
+	    var start = (start_ == null)? 0: Math.min(start_, end_);
+	    var end = (end_ == null)? total_lines-1: Math.max(start_, end_);
+	    if (start < 0)
+	        start = 0;
+	    if (end > total_lines)
+	        end = total_lines-1;
+        var current_frame = this.runtime.getCurrentEventStack();
+        var current_event = current_frame.current_event;
+		var solModifierAfterCnds = current_frame.isModifierAfterCnds();
+		var i;
+		for(i=start; i<=end; i++)
+		{
+            if ((!filter_fn) || filter_fn(i))
+            {
+                if (solModifierAfterCnds)
+                {
+                    this.runtime.pushCopySol(current_event.solModifiers);
+                }
+                this.exp_CellIndex = i;
+                current_event.retrigger();
+		        if (solModifierAfterCnds)
+		        {
+		            this.runtime.popSol(current_event.solModifiers);
+		        }
+            }
+		}
+		return false;
+	};
+    instanceProto.get_list_height = function ()
+	{
+        var h;
+        var totalRowsHeight = this.lines_mgr.GetTotalRowsHeight();
+        var inst_height = this.get_inst_height();
+        if (totalRowsHeight > inst_height)
+            h = totalRowsHeight - inst_height;
+        else
+            h = 0;
+        return h;
+	};
+    instanceProto.get_list_width = function ()
+	{
+        var w;
+        var totalColWidth = this.lines_mgr.GetTotalColWidth();
+        var inst_width = this.get_inst_width();
+        if (totalColWidth > inst_width)
+            w = totalColWidth - inst_width;
+        else
+            w = totalColWidth;
+	};
+    instanceProto.is_OY_out_bound = function (oy, bound_type)
+	{
+	    var is_out_bound;
+	    if (bound_type === 0)
+	        is_out_bound = (oy > 0);
+	    else
+	        is_out_bound = (oy < -this.get_list_height());
+	    return is_out_bound;
+	};
+    instanceProto.is_OX_out_bound = function (ox, bound_type)
+	{
+	    var is_out_bound;
+	    if (bound_type === 0)
+	        is_out_bound = (ox > 0);
+	    else
+	        is_out_bound = (ox < -this.get_list_width());
+	    return is_out_bound;
+	};
+    instanceProto._uid2inst = function(uid, objtype)
+    {
+	    if (uid == null)
+		    return null;
+        var inst = this.runtime.getObjectByUID(uid);
+        if (inst == null)
+			return null;
+        if ((objtype == null) || (inst.type == objtype))
+            return inst;
+        else if (objtype.is_family)
+        {
+            var families = inst.type.families;
+            var cnt=families.length, i;
+            for (i=0; i<cnt; i++)
+            {
+                if (objtype == families[i])
+                    return inst;
+            }
+        }
+        return null;
+    };
+    instanceProto.pick_insts_on_cell = function (line_index, objtype)
+	{
+	    var line = this.lines_mgr.GetLine(line_index, true);
+	    if (line == null)
+	        return false;
+	    var insts_uid = line.GetPinInstsUID();
+        var sol = objtype.getCurrentSol();
+        sol.select_all = false;
+        sol.instances.length = 0;   // clear contents
+        var uid, inst;
+        for (uid in insts_uid)
+        {
+            inst = this._uid2inst(uid, objtype)
+            if (inst != null)
+                sol.instances.push(inst);
+        }
+        objtype.applySolToContainer();
+        return  (sol.instances.length >0);
+	};
+    var name2type = {};  // private global object
+	instanceProto.pick_all_insts_on_cell = function (line_index)
+	{
+	    var line = this.lines_mgr.GetLine(line_index, true);
+	    if (line == null)
+	        return false;
+	    var insts_uid = line.GetPinInstsUID();
+	    var uid, inst, objtype, sol;
+	    clean_table(name2type);
+	    var has_inst = false;
+	    for (uid in insts_uid)
+	    {
+	        inst = this._uid2inst(uid);
+            if (inst == null)
+                continue;
+	        objtype = inst.type;
+	        sol = objtype.getCurrentSol();
+	        if (!(objtype.name in name2type))
+	        {
+	            sol.select_all = false;
+	            sol.instances.length = 0;
+	            name2type[objtype.name] = objtype;
+	        }
+	        sol.instances.push(inst);
+	        has_inst = true;
+	    }
+	    var name;
+	    for (name in name2type)
+	        name2type[name].applySolToContainer();
+	    clean_table(name2type);
+	    return has_inst;
+	};
+    var clean_table = function(o)
+    {
+        for(var k in o)
+            delete o[k];
+    };
+	instanceProto.saveToJSON = function ()
+	{
+        this.pre_instX = this.x;
+        this.pre_instY = this.y;
+        this.pre_instHeight = this.height;
+        this.pre_instWidth  = this.width;
+		return {
+		         "update_flag": this.update_flag,
+		         "OY": this.OY,
+		         "OX": this.OX,
+		         "lines_mgr": this.lines_mgr.saveToJSON(),
+		         "visible_lines": this.visibleLineIndexes,
+		         "pre_visible_lines": this.pre_visibleLineIndexes,
+		         "visibleY_start": this.visibleY_start,
+		         "visibleY_end": this.visibleY_end,
+		         "visibleX_start": this.visibleX_start,
+		         "visibleX_end": this.visibleX_end,
+		         "pre_instX": this.pre_instX,
+		         "pre_instY": this.pre_instY,
+		         "pre_instHeight": this.pre_instHeight,
+		         "pre_instWidth": this.pre_instWidth,
+		         "topb": this.is_out_top_bound,
+		         "bottomb": this.is_out_bottom_bound,
+		         "leftb": this.is_out_left_bound,
+		         "rightb": this.is_out_right_bound
+		       };
+	};
+	instanceProto.loadFromJSON = function (o)
+	{
+	    this.update_flag = o["update_flag"];
+	    this.OY = o["OY"];
+	    this.OX = o["OX"];
+	    this.lines_mgr_save = o["lines_mgr"];
+	    this.visibleLineIndexes = o["visible_lines"];
+	    this.pre_visibleLineIndexes = o["pre_visible_lines"];
+	    this.visibleY_start = o["visibleY_start"];
+	    this.visibleY_end = o["visibleY_end"];
+	    this.visibleX_start = o["visibleX_start"];
+	    this.visibleX_end = o["visibleX_end"];
+	    this.pre_instX = o["pre_instX"];
+	    this.pre_instY = o["pre_instY"];
+	    this.pre_instHeight = o["pre_instHeight"];
+	    this.pre_instWidth = o["pre_instWidth"];
+        this.is_out_top_bound = o["topb"];
+        this.is_out_bottom_bound = o["bottomb"];
+        this.is_out_left_bound = o["leftb"];
+        this.is_out_right_bound = o["rightb"];
+	};
+	instanceProto.afterLoad = function ()
+	{
+	    this.lines_mgr.afterLoad( this.lines_mgr_save );
+	    this.lines_mgr_save = null;
+	};
+	function Cnds() {};
+	pluginProto.cnds = new Cnds();
+	Cnds.prototype.OnCellVisible = function ()
+	{
+		return true;
+	};
+	Cnds.prototype.OnCellInvisible = function ()
+	{
+		return true;
+	};
+	Cnds.prototype.ForEachCell = function (start, end)
+	{
+		return this.for_each_line(start, end);
+	};
+	Cnds.prototype.ForEachVisibleCell = function ()
+	{
+	    if (this.visibleY_start == null)
+	        return false;
+        var current_frame = this.runtime.getCurrentEventStack();
+        var current_event = current_frame.current_event;
+		var solModifierAfterCnds = current_frame.isModifierAfterCnds();
+	    var y, x, idx;
+	    for(y=this.visibleY_start; y<=this.visibleY_end; y++)
+	    {
+			for (x=this.visibleX_start; x<=this.visibleX_end; x++)
+	        {
+                if (solModifierAfterCnds)
+                {
+                    this.runtime.pushCopySol(current_event.solModifiers);
+                }
+				idx = this.lines_mgr.XY2LineIndex(x, y);
+                this.exp_CellIndex = idx;
+				current_event.retrigger();
+		        if (solModifierAfterCnds)
+		        {
+		            this.runtime.popSol(current_event.solModifiers);
+		        }
+	        }
+        }
+		return false;
+	};
+	Cnds.prototype.ForEachMatchedCell = function (k_, cmp, v_)
+	{
+        var self = this;
+        var filter_fn = function (line_index)
+        {
+            var d = self.lines_mgr.GetCustomData(line_index, k_);
+            if (d == null)
+                return false;
+    		return cr.do_cmp(d, cmp, v_);
+        }
+		return this.for_each_line(null, null, filter_fn);
+	};
+	Cnds.prototype.IsOYOutOfBound = function (bound_type)
+	{
+	    if ((bound_type === 0) || (bound_type === 1))
+	        return this.is_OY_out_bound(this.OY, bound_type);
+	    else
+		    return this.is_OY_out_bound(this.OY, 0) || this.is_OY_out_bound(this.OY, 1);
+	};
+	Cnds.prototype.OnOYOutOfBound = function (bound_type)
+	{
+	    if ((bound_type === 0) || (bound_type === 1))
+	        return (this.bound_type === bound_type);
+	    else
+	        return true;
+	};
+	Cnds.prototype.IsOXOutOfBound = function (bound_type)
+	{
+	    if ((bound_type === 0) || (bound_type === 1))
+	        return this.is_OX_out_bound(this.OX, bound_type);
+	    else
+		    return this.is_OX_out_bound(this.OX, 0) || this.is_OY_out_bound(this.OX, 1);
+	};
+	Cnds.prototype.OnOXOutOfBound = function (bound_type)
+	{
+	    if ((bound_type === 0) || (bound_type === 1))
+	        return (this.bound_type === bound_type);
+	    else
+	        return true;
+	};
+	Cnds.prototype.PickInstsOnCell = function (line_index, objtype)
+	{
+	    if (!objtype)
+	        return false;
+		return this.pick_insts_on_cell(line_index, objtype);
+	};
+	Cnds.prototype.PickAllInstsOnCell = function (line_index)
+	{
+	    return this.pick_all_insts_on_cell(line_index);
+	};
+	function Acts() {};
+	pluginProto.acts = new Acts();
+    Acts.prototype.SetOY = function (oy)
+	{
+	    this.set_OY(oy);
+	};
+    Acts.prototype.SetOX = function (ox)
+	{
+	    this.set_OX(ox);
+	};
+    Acts.prototype.SetOXY = function (ox, oy)
+	{
+	    this.set_OX(ox);
+	    this.set_OY(oy);
+	};
+    Acts.prototype.AddOY = function (dy)
+	{
+	    this.set_OY(this.OY + dy);
+	};
+    Acts.prototype.AddOX = function (dx)
+	{
+	    this.set_OX(this.OX + dx);
+	};
+    Acts.prototype.AddOXY = function (dx, dy)
+	{
+	    this.set_OX(this.OX + dx);
+	    this.set_OY(this.OY + dy);
+	};
+    Acts.prototype.PinInstToCell = function (objs, cell_index)
+	{
+        if ((!objs) || (this.exp_CellIndex == -1))
+            return;
+        if (cell_index == null)
+            cell_index = this.exp_CellIndex;
+        else if (!this.visibleLineIndexes[cell_index])
+            return;
+		var insts = objs.getCurrentSol().getObjects();
+		var i, cnt=insts.length;
+        for (i=0; i<cnt; i++)
+        {
+	        this.lines_mgr.AddInstToLine(cell_index, insts[i]);
+	    }
+	};
+    Acts.prototype.UnPinInst = function (objs, cell_index)
+	{
+        if (!objs)
+            return;
+        if (this.visibleY_start == null)
+            return;
+        var insts = objs.getCurrentSol().getObjects();
+        var i, j, cnt=insts.length, uid;
+        for (i=0; i<cnt; i++)
+        {
+            uid = insts[i].uid;
+            if (cell_index == null)
+            {
+                for(j=this.visibleY_start; j<=this.visibleY_end; j++)
+                    this.lines_mgr.RemoveInstFromLine(j, uid);
+            }
+            else
+            {
+                this.lines_mgr.RemoveInstFromLine(cell_index, uid);
+            }
+        }
+	};
+    Acts.prototype.SetCellsCount = function (cnt)
+	{
+	    this.set_cells_count(cnt);
+	};
+    Acts.prototype.SetColumnNumber = function (col)
+	{
+	    this.set_col_num(col);
+	};
+    Acts.prototype.SetGridSize = function (col, row)
+	{
+	    this.set_col_num(col, true);
+	    this.set_cells_count(col*row);
+	};
+    Acts.prototype.SetOXYToCellIndex = function (line_index)
+	{
+        var row_index = this.lines_mgr.LineIndex2RowIndex(line_index);
+        var col_index = this.lines_mgr.LineIndex2ColIndex(line_index);
+	    this.set_OX( -col_index * this.lines_mgr.defaultLineWidth );
+	    this.set_OY( -row_index * this.lines_mgr.defaultLineHeight );
+	};
+    Acts.prototype.SetOYByPercentage = function (percentage)
+	{
+        var p = this.get_list_height() *percentage;
+        this.set_OY( -p );
+	};
+    Acts.prototype.SetValue = function (cell_index, key_, value_)
+	{
+	    this.lines_mgr.SetCustomData(cell_index, key_, value_);
+	};
+    Acts.prototype.CleanKeyInAllCell = function (key_)
+	{
+	    this.lines_mgr.SetCustomData(null, key_, null);
+	};
+    Acts.prototype.CleanAllKeysInAllCell = function ()
+	{
+	    this.lines_mgr.SetCustomData(null, null, null);
+	};
+    Acts.prototype.InsertNewCells = function (cell_index, cnt)
+	{
+	    this.insert_cells(cell_index, cnt);
+	};
+    Acts.prototype.RemoveCells = function (cell_index, cnt)
+	{
+	    this.remove_cells(cell_index, cnt);
+	};
+    Acts.prototype.InsertCells = function (cell_index, content)
+	{
+	    this.insert_cells(cell_index, content);
+	};
+    Acts.prototype.PushNewCells = function (where, cnt)
+	{
+	    var cell_index = (where==1)? 0: this.lines_mgr.GetLinesCount();
+	    this.insert_cells(cell_index, cnt);
+	};
+    Acts.prototype.PushCells = function (where, content)
+	{
+	    var cell_index = (where==1)? 0: this.lines_mgr.GetLinesCount();
+	    this.insert_cells(cell_index, content);
+	};
+    Acts.prototype.SetDefaultCellHeight = function (height)
+	{
+	    if (height <= 0)
+		    return;
+        var is_changed =this.lines_mgr.SetDefaultLineHeight(height);
+        if (is_changed)  this.update_flag = true;
+	};
+    Acts.prototype.SetDefaultCellWidth = function (width)
+	{
+	    if (width <= 0)
+		    return;
+        var is_changed = this.lines_mgr.SetDefaultLineWidth(width);
+        if (is_changed)  this.update_flag = true;
+	};
+    Acts.prototype.SetCellHeight = function (cell_index, height)
+	{
+	    if (height <= 0)
+		    return;
+        var is_changed =this.lines_mgr.SetLineHeight(cell_index, height);
+        if (is_changed)  this.update_flag = true;
+	};
+    Acts.prototype.RefreshVisibleCells = function ()
+	{
+        this.update(true);
+	};
+	Acts.prototype.PickInstsOnCell = function (cell_index, objtype)
+	{
+	    if (!objtype)
+	        return;
+		this.pick_insts_on_cell(cell_index, objtype);
+	};
+	Acts.prototype.PickAllInstsOnCell = function (cell_index)
+	{
+	    return this.pick_all_insts_on_cell(cell_index);
+	};
+	function Exps() {};
+	pluginProto.exps = new Exps();
+    Exps.prototype.CellIndex = function (ret)
+	{
+		ret.set_int(this.exp_CellIndex);
+	};
+    Exps.prototype.CellXIndex = function (ret)
+	{
+		ret.set_int(this.exp_CellIndex % this.col_num);
+	};
+    Exps.prototype.CellYIndex = function (ret)
+	{
+		ret.set_int( Math.floor(this.exp_CellIndex / this.col_num) );
+	};
+    Exps.prototype.CellTLX = function (ret)
+	{
+		ret.set_float(this.exp_CellTLX);
+	};
+    Exps.prototype.CellTLY = function (ret)
+	{
+		ret.set_float(this.exp_CellTLY);
+	};
+    Exps.prototype.UID2CellIndex = function (ret, uid)
+	{
+	    var cell_index;
+	    if (this.visibleY_start !== null)
+	    {
+	        var y, x, idx, find=false;
+	        for(y=this.visibleY_start; y<=this.visibleY_end; y++)
+	        {
+			    for (x=this.visibleX_start; x<=this.visibleX_end; x++)
+				{
+				    idx = this.lines_mgr.XY2LineIndex(x, y);
+				    find = this.lines_mgr.LineHasInst(idx, uid);
+	                if (find)
+	                {
+  	                    cell_index = idx;
+	                    break;
+	                }
+		        }
+				if (find)
+				    break;
+	        }
+	    }
+	    if (cell_index == null)
+	        cell_index = -1;
+		ret.set_int(cell_index);
+	};
+    Exps.prototype.CellIndex2CellTLY = function (ret, cell_index)
+	{
+	    var row_index = this.lines_mgr.LineIndex2RowIndex(cell_index);
+		ret.set_float(this.get_tlY(row_index));
+	};
+    Exps.prototype.CellIndex2CellTLX = function (ret, cell_index)
+	{
+	    var col_index = this.lines_mgr.LineIndex2ColIndex(cell_index);
+		ret.set_float(this.get_tlX(col_index));
+	};
+    Exps.prototype.TotalCellsCount = function (ret)
+	{
+		ret.set_int(this.lines_mgr.GetLinesCount());
+	};
+    Exps.prototype.DefaultCellHeight = function (ret)
+	{
+		ret.set_float(this.lines_mgr.defaultLineHeight);
+	};
+    Exps.prototype.DefaultCellWidth = function (ret)
+	{
+		ret.set_float(this.lines_mgr.defaultLineWidth);
+	};
+    Exps.prototype.TotalColumnsCount = function (ret)
+	{
+		ret.set_int(this.lines_mgr.colNum);
+	};
+    Exps.prototype.CellHeight = function (ret, cell_index)
+	{
+		ret.set_int(this.lines_mgr.GetRowHeight(cell_index));
+	};
+    Exps.prototype.ListHeight = function (ret)
+	{
+		ret.set_float(this.lines_mgr.GetTotalRowsHeight());
+	};
+    Exps.prototype.ListWidth = function (ret)
+	{
+		ret.set_float(this.lines_mgr.GetTotalColWidth());
+	};
+    Exps.prototype.DefaultCellWidth = function (ret)
+	{
+		ret.set_float(this.lines_mgr.defaultLineWidth);
+	};
+    Exps.prototype.At = function (ret, index_, key_, default_value)
+	{
+	    var v = this.lines_mgr.GetCustomData(index_, key_);
+        if (v == null)
+            v = default_value || 0;
+		ret.set_any(v);
+	};
+    Exps.prototype.LastRemovedCells = function (ret)
+	{
+		ret.set_string(this.exp_LastRemovedLines);
+	};
+    Exps.prototype.CustomDataInCells = function (ret, cell_index, cnt)
+	{
+	    var dataInLines = this.lines_mgr.GetCustomDataInLines(cell_index, cnt);
+		ret.set_string(JSON.stringify( dataInLines ));
+	};
+    Exps.prototype.OY = function (ret)
+	{
+		ret.set_float(this.OY);
+	};
+    Exps.prototype.BottomOY = function (ret)
+	{
+		ret.set_float(-this.get_list_height());
+	};
+    Exps.prototype.TopOY = function (ret)
+	{
+		ret.set_float(0);
+	};
+    Exps.prototype.LastBoundOY = function (ret)
+	{
+		ret.set_float(this.exp_LastBoundOY);
+	};
+    Exps.prototype.OX = function (ret)
+	{
+		ret.set_float(this.OX);
+	};
+    Exps.prototype.LeftOX = function (ret)
+	{
+		ret.set_float(0);
+	};
+    Exps.prototype.RightOX = function (ret)
+	{
+		ret.set_float(-this.get_list_width());
+	};
+    Exps.prototype.CurCellIndex = function (ret)
+	{
+		ret.set_int(this.exp_CellIndex);
+	};
+    Exps.prototype.CurCellXIndex = function (ret)
+	{
+		ret.set_int( this.lines_mgr.LineIndex2ColIndex(this.exp_CellIndex) );
+	};
+    Exps.prototype.CurCellYIndex = function (ret)
+	{
+		ret.set_int( this.lines_mgr.LineIndex2RowIndex(this.exp_CellIndex) );
+	};
+    Exps.prototype.TLVisibleCellXIndex = function (ret)
+	{
+        var x;
+        if (this.is_vertical_scrolling)
+            x = this.visibleX_start;
+        else
+            x = this.visibleY_start;
+		ret.set_int(x || 0);
+	};
+    Exps.prototype.TLVisibleCellYIndex = function (ret)
+	{
+        var y;
+        if (this.is_vertical_scrolling)
+            y = this.visibleY_start;
+        else
+            y = this.visibleX_start;
+		ret.set_int(y || 0);
+	};
+    Exps.prototype.BRVisibleCellXIndex = function (ret)
+	{
+        var x;
+        if (this.is_vertical_scrolling)
+            x = this.visibleX_end;
+        else
+            x = this.visibleY_end;
+		ret.set_int(x || 0);
+	};
+    Exps.prototype.BRVisibleCellYIndex = function (ret)
+	{
+        var y;
+        if (this.is_vertical_scrolling)
+            y = this.visibleY_end;
+        else
+            y = this.visibleX_end;
+		ret.set_int(y || 0);
+	};
+}());
+(function ()
+{
+    var ObjCacheKlass = function ()
+    {
+        this.lines = [];
+    };
+    var ObjCacheKlassProto = ObjCacheKlass.prototype;
+	ObjCacheKlassProto.allocLine = function()
+	{
+		return (this.lines.length > 0)? this.lines.pop(): null;
+	};
+	ObjCacheKlassProto.freeLine = function (l)
+	{
+		this.lines.push(l);
+	};
+    var lineCache = new ObjCacheKlass();
+    cr.plugins_.Rex_GridCtrl.LinesMgrKlass = function(plugin)
+    {
+        this.plugin = plugin;
+        this.lines = [];
+	    this.defaultLineHeight = 0;
+	    this.defaultLineWidth = 0;
+        this.colNum = 0;
+        this.defaultLineHeightMode = true;
+        this.totalRowsHeight = null;
+    };
+    var LinesMgrKlassProto = cr.plugins_.Rex_GridCtrl.LinesMgrKlass.prototype;
+	LinesMgrKlassProto.SetLinesCount = function(cnt)
+	{
+        var end = this.GetLinesCount();
+		if (end === cnt)
+	        return false;
+        if (end > cnt)
+        {
+            var i, line;
+            for(i=cnt; i<end; i++)
+            {
+                line = this.lines[i];
+                if (!line)
+                    continue;
+                line.Clean();
+                lineCache.freeLine( line );
+            }
+            this.lines.length = cnt;
+        }
+        else if (end < cnt)
+        {
+            var i,start=end;
+            this.lines.length = cnt
+            for(i=start; i<cnt; i++)
+            {
+                this.lines[i] = null;
+            }
+        }
+        if (Math.floor(end/this.colNum) !== Math.floor(cnt/this.colNum))
+            this.totalRowsHeight = null;
+	    return true;
+	};
+	LinesMgrKlassProto.SetColNum = function(colNum)
+	{
+        if (this.colNum === colNum)
+            return false;
+        this.colNum = colNum;
+        this.totalRowsHeight = null;
+        return true;
+	};
+    LinesMgrKlassProto.GetLinesCount = function()
+    {
+        return this.lines.length;
+    };
+    LinesMgrKlassProto.IsInRange = function(line_index)
+    {
+        return ((line_index >= 0) && (line_index < this.GetLinesCount()));
+    };
+    LinesMgrKlassProto.GetNewLine = function()
+    {
+        var line = lineCache.allocLine();
+        if (line == null)
+            line = new LineKlass(this.plugin);
+        else
+            line.Reset(this.plugin);
+        return line;
+    };
+	LinesMgrKlassProto.GetLine = function(line_index, dont_create_line_inst)
+	{
+        if ((line_index >= this.GetLinesCount()) || (line_index < 0))
+            return;
+        if ((this.lines[line_index] == null) && (!dont_create_line_inst))
+        {
+            this.lines[line_index] = this.GetNewLine();
+        }
+        return this.lines[line_index];
+	};
+	LinesMgrKlassProto.AddInstToLine = function(line_index, inst)
+	{
+	    if (inst == null)
+	        return;
+        var line = this.GetLine(line_index);
+        if (line == null)
+            return;
+        line.AddInst(inst);
+	};
+	LinesMgrKlassProto.RemoveInstFromLine = function(line_index, uid)
+	{
+        var line = this.GetLine(line_index, true);
+        if (line == null)
+            return;
+        line.RemoveInst(uid);
+	};
+	LinesMgrKlassProto.LineHasInst = function(line_index, uid)
+	{
+        var line = this.GetLine(line_index, true);
+        if (line == null)
+            return;
+        return line.HasInst(uid);
+	};
+	LinesMgrKlassProto.DestroyPinedInsts = function(line_index)
+	{
+	    var line = this.GetLine(line_index, true);
+        if (line == null)
+            return;
+        line.DestroyPinedInsts();
+	};
+	LinesMgrKlassProto.SetCustomData = function(line_index, k, v)
+	{
+	    if (line_index != null)  // set custom data in a line
+		{
+            var line = this.GetLine(line_index);
+            if (line == null)
+                return;
+            line.SetCustomData(k, v);
+	    }
+        else    // set custom data in all lines
+		{
+		    var i, cnt=this.GetLinesCount(), line;
+			var is_clean_key = (v == null);
+			for(i=0; i<cnt; i++)
+			{
+			    line = this.GetLine(i, is_clean_key);
+				if (line == null)
+				    continue;
+                line.SetCustomData(k, v);
+	        }
+		}
+	};
+	LinesMgrKlassProto.GetCustomData = function(line_index, k)
+	{
+	    var line = this.GetLine(line_index, true);
+        if (line == null)
+            return;
+        return line.GetCustomData(k);
+	};
+	LinesMgrKlassProto.InsertLines = function(line_index, content)
+	{
+	    var cnt = content.length;
+	    if (line_index < 0)
+	        line_index = 0;
+	    else if (line_index > this.GetLinesCount())
+	        line_index = this.GetLinesCount();
+	    this.lines.length += cnt;
+	    var start = this.GetLinesCount() - 1;
+	    var end = line_index + cnt;
+	    var i, insert_line, new_line;
+	    for (i=start; i>=line_index; i--)
+	    {
+	        if (i>=end)  // shift line down
+	            this.lines[i] = this.lines[i-cnt];
+	        else        // empty space
+	        {
+	            insert_line = content[i-line_index];
+	            if (insert_line == null)
+	                this.lines[i] = null;
+	            else
+	            {
+	                new_line = this.GetNewLine();
+	                new_line.SetCustomData( insert_line );
+	                this.lines[i] = new_line;
+	            }
+	        }
+	    }
+	};
+	LinesMgrKlassProto.RemoveLines = function(line_index, cnt)
+	{
+	    var i, line, removed_lines=[];
+	    removed_lines.length = cnt;
+	    for (i=0; i<cnt; i++)
+	    {
+	        line = this.GetLine(line_index+i, true);
+	        if (line)
+	        {
+	            removed_lines[i] = line.GetCustomData();
+                line.Clean();
+                lineCache.freeLine( line );
+	        }
+	        else
+	        {
+	            removed_lines[i] = null;
+	        }
+	    }
+	    var start = line_index+cnt;
+	    var end = this.GetLinesCount() -1;
+	    for (i=start; i<=end; i++)
+	    {
+	        this.lines[i-cnt] = this.lines[i];
+	    }
+	    this.lines.length -= cnt;
+	    return removed_lines;
+	};
+	LinesMgrKlassProto.GetCustomDataInLines = function(line_index, cnt)
+	{
+	    var i, line, dataInLines=[];
+	    dataInLines.length = cnt;
+	    for (i=0; i<cnt; i++)
+	    {
+	        line = this.GetLine(line_index+i, true);
+	        if (line)
+	            dataInLines[i] = line.GetCustomData();
+	        else
+	            dataInLines[i] = null;
+	    }
+	    return dataInLines;
+	};
+	LinesMgrKlassProto.SetDefaultLineHeight = function(height)
+	{
+        if (this.defaultLineHeight === height)
+            return false;
+        this.defaultLineHeight = height;
+        this.totalRowsHeight = null;
+        return true;
+	};
+	LinesMgrKlassProto.SetDefaultLineWidth = function(width)
+	{
+        if (this.defaultLineWidth === width)
+            return false;
+        this.defaultLineWidth = width;
+        return true;
+	};
+    LinesMgrKlassProto.XY2LineIndex = function (colIndex, rowIndex)
+    {
+        return (rowIndex * this.colNum ) + colIndex;
+    };
+    LinesMgrKlassProto.LineIndex2ColIndex = function (lineIndex)
+    {
+        return lineIndex%this.colNum;
+    };
+    LinesMgrKlassProto.LineIndex2RowIndex = function (lineIndex)
+    {
+        return Math.floor(lineIndex/this.colNum);
+    };
+	LinesMgrKlassProto.GetLineHeight = function(line_index)
+	{
+        if (!this.IsInRange(line_index))
+            return 0;
+        var line_height;
+        if (this.defaultLineHeightMode)
+            line_height = this.defaultLineHeight;
+        else
+        {
+            var line = this.GetLine(line_index, true);
+            var deltaHeight = (line)? line.deltaHeight : 0;
+            line_height = this.defaultLineHeight + deltaHeight;
+        }
+        return line_height;
+	};
+	LinesMgrKlassProto.SetLineHeight = function(line_index, height)
+	{
+        if (!this.IsInRange(line_index))
+            return;
+        var row_index = this.LineIndex2RowIndex(line_index);
+        var curRowHeight = this.GetRowHeight(row_index);
+        var curHeight = this.GetLineHeight(line_index);
+        if (curHeight === height)
+            return false;
+        var deltaHeight = height - this.defaultLineHeight;
+        var line = this.GetLine(line_index);
+        line.deltaHeight = deltaHeight;
+        if (deltaHeight !== 0)
+            this.defaultLineHeightMode = false;
+        var newRowHeight = this.GetRowHeight(row_index);
+        if ((newRowHeight !== curRowHeight) && (this.totalRowsHeight !== null))
+        {
+            var dd = newRowHeight - curRowHeight;
+            this.totalRowsHeight += dd;
+        }
+        return true;
+	};
+    LinesMgrKlassProto.GetRowHeight = function (rowIndex)
+    {
+        var cnt=this.colNum;
+        if (cnt > 1)
+        {
+            var i;
+            var maxHeight = 0, lineHeight;
+            for(i=0; i<cnt; i++)
+            {
+                lineHeight = this.GetLineHeight( this.XY2LineIndex(i, rowIndex) );
+                if (maxHeight < lineHeight)
+                    maxHeight = lineHeight;
+            }
+            return maxHeight;
+        }
+        else
+        {
+            return this.GetLineHeight( this.XY2LineIndex(0, rowIndex) );
+        }
+    };
+    LinesMgrKlassProto.GetColWidth = function (colIndex)
+    {
+        return this.defaultLineWidth;
+    };
+    LinesMgrKlassProto.GetTotalRowsCnt = function ()
+    {
+        return Math.ceil( this.GetLinesCount()/this.colNum );
+    };
+	LinesMgrKlassProto.Height2RawIndex = function(h, isCeil)
+	{
+        if (this.defaultLineHeightMode)
+        {
+            var row_index = h / this.defaultLineHeight;
+            if (isCeil)
+                row_index = Math.ceil(row_index);
+            else
+                row_index = Math.floor(row_index);
+            return row_index;
+        }
+        else
+        {
+            var total_rows_cnt = this.GetTotalRowsCnt();
+            var remain=h, line_cnt=0, is_valid_index;
+            var line, row_height, row_index=0;
+            while (1)
+            {
+                row_height = this.GetRowHeight(row_index);
+                remain -=  row_height;
+                is_valid_index = (row_index >=0) && (row_index < total_rows_cnt);
+                if ((remain > 0) && is_valid_index)
+                {
+                    row_index += 1;
+                }
+                else if (remain === 0)
+                    return row_index;
+                else
+                {
+                    if (isCeil)
+                    {
+                        var row_index_save = row_index;
+                        row_index += 1;
+                        is_valid_index = (row_index >=0) && (row_index < total_rows_cnt);
+                        if (!is_valid_index)
+                            row_index = row_index_save;
+                    }
+                    return row_index;
+                }
+            }
+        }
+	};
+	LinesMgrKlassProto.Width2ColIndex = function(w, isCeil)
+	{
+        var col_index = w / this.defaultLineWidth;
+        if (isCeil)
+            col_index = Math.ceil(col_index);
+        else
+            col_index = Math.floor(col_index);
+        return col_index;
+    };
+	LinesMgrKlassProto.RowIndex2Height = function(start, end)
+	{
+        if (this.defaultLineHeightMode)
+            return (end - start + 1) * this.defaultLineHeight;
+        else
+        {
+            var i, h, sum=0;
+            var all_default_height = true;
+            for(i=start; i<=end; i++)
+            {
+                h = this.GetRowHeight(i);
+                sum += h;
+                if (h !== this.defaultLineHeight)
+                    all_default_height = false;
+            }
+            var all_lines = (start===0)  && (end >= (this.GetTotalRowsCnt()-1));
+            if (all_default_height && all_lines)
+                this.defaultLineHeightMode = true;
+            return sum;
+        }
+	};
+	LinesMgrKlassProto.ColIndex2Width = function(start, end)
+	{
+        return (end - start + 1) * this.defaultLineWidth;
+	};
+    LinesMgrKlassProto.GetTotalRowsHeight = function ()
+    {
+        if (this.totalRowsHeight === null)
+            this.totalRowsHeight = this.RowIndex2Height(0, this.GetTotalRowsCnt()-1);
+        return this.totalRowsHeight;
+    };
+    LinesMgrKlassProto.GetTotalColWidth = function ()
+    {
+        return this.colNum * this.defaultLineWidth;
+    };
+	LinesMgrKlassProto.saveToJSON = function ()
+	{
+	    var i,cnt=this.GetLinesCount();
+	    var save_lines = [], line, save_line;
+	    for(i=0; i<cnt; i++)
+	    {
+	        line = this.lines[i];
+	        save_line = (!line)? null : line.saveToJSON()
+	        save_lines.push( save_line );
+	    }
+		return { "lines": save_lines,
+                      "dlh": this.defaultLineHeight,
+                      "dlw": this.defaultLineWidth,
+                      "cn": this.colNum,
+                      "dlhm": this.defaultLineHeightMode,
+                      "trh": this.totalRowsHeight,
+		       };
+	};
+	LinesMgrKlassProto.afterLoad = function (o)
+	{
+	    this.lines.length = 0;
+	    var save_lines = o["lines"], save_line;
+	    var i,cnt=save_lines.length;
+	    for(i=0; i<cnt; i++)
+	    {
+	        save_line = save_lines[i];
+	        if (!save_line)
+	            this.lines.push( null );
+	        else
+	        {
+	            var new_line = this.GetNewLine();
+	            new_line.afterLoad(save_line);
+	            this.lines.push( new_line );
+	        }
+	    }
+	    this.defaultLineHeight = o["dlh"];
+	    this.defaultLineWidth = o["dlw"];
+        this.colNum =  o["cn"];
+        this.defaultLineHeightMode = o["dlhm"];
+        this.totalRowsHeight = o["trh"];
+	};
+    var LineKlass = function(plugin)
+    {
+        this.plugin = plugin;
+        this.pined_insts = {};
+        this.custom_data = {};
+        this.tlx = 0;
+        this.tly = 0;
+        this.deltaHeight = 0;
+    };
+    var LineKlassProto = LineKlass.prototype;
+	LineKlassProto.Reset = function(plugin)
+	{
+        this.plugin = plugin;
+        this.tlx = 0;
+        this.tly = 0;
+        this.deltaHeight = 0;
+	};
+	LineKlassProto.SetTLXY = function(tlx, tly)
+	{
+        this.tlx = tlx;
+        this.tly = tly;
+	};
+	LineKlassProto.AddInst = function(inst)
+	{
+	    var uid = inst.uid;
+	    if (!this.pined_insts.hasOwnProperty(uid))
+	        this.pined_insts[uid] = {};
+	    var pin_info = this.pined_insts[uid];
+	    pin_info["dx"] = inst.x - this.get_px();
+	    pin_info["dy"] = inst.y - this.get_py();
+	};
+	LineKlassProto.RemoveInst = function(uid)
+	{
+	    if (uid != null)
+	    {
+	        if (!this.pined_insts.hasOwnProperty(uid))
+	            return;
+            delete this.pined_insts[uid];
+        }
+        else
+        {
+            for(var uid in this.pined_insts)
+                delete this.pined_insts[uid];
+        }
+	};
+	LineKlassProto.HasInst = function(uid)
+	{
+	    return this.pined_insts.hasOwnProperty(uid);
+	};
+	LineKlassProto.PinInsts = function()
+	{
+	    var uid, inst, pin_info, runtime = this.plugin.runtime;
+	    for (uid in this.pined_insts)
+	    {
+	        inst = runtime.getObjectByUID(uid);
+	        if (!inst)
+	        {
+	            delete this.pined_insts[uid];
+	            continue;
+	        }
+	        pin_info = this.pined_insts[uid];
+	        pin_inst(inst, pin_info, this.get_px(), this.get_py());
+	    }
+	};
+	LineKlassProto.GetPinInstsUID = function()
+	{
+	    return this.pined_insts;
+	};
+	LineKlassProto.get_px = function()
+	{
+	    return (this.plugin.is_vertical_scrolling)? this.tlx : this.tly;
+	};
+	LineKlassProto.get_py = function()
+	{
+	    return (this.plugin.is_vertical_scrolling)? this.tly : this.tlx;
+	};
+	var pin_inst = function(inst, pin_info, ref_x, ref_y)
+	{
+        var new_x = ref_x + pin_info["dx"];
+        var new_y = ref_y + pin_info["dy"];
+        if ((new_x != inst.x) || (new_y != inst.y))
+        {
+            inst.x = new_x;
+            inst.y = new_y;
+            inst.set_bbox_changed();
+        }
+	};
+	LineKlassProto.DestroyPinedInsts = function()
+	{
+	    var uid, inst, runtime = this.plugin.runtime;
+	    for (uid in this.pined_insts)
+	    {
+	        inst = runtime.getObjectByUID(uid);
+	        if (!inst)
+	            continue;
+            Object.getPrototypeOf(inst.type.plugin).acts.Destroy.call(inst);
+	        delete this.pined_insts[uid];
+	    }
+	};
+	LineKlassProto.SetCustomData = function(k,v)
+	{
+	    if (typeof(k) != "object")    // single key
+		{
+		    if (v != null)
+	            this.custom_data[k] = v;
+		    else if (this.custom_data.hasOwnProperty(k))  // v == null: clean key
+			    delete this.custom_data[k];
+	    }
+        else if (k === null)    // clean all
+        {
+            for (var n in this.custom_data)
+                delete this.custom_data[n];
+        }
+	    else                          // copy all
+	    {
+	        var d = k;
+	        for (var k in d)
+	            this.custom_data[k] = d[k];
+	    }
+	};
+	LineKlassProto.GetCustomData = function(k)
+	{
+	    if (k != null)    // single key
+	        return this.custom_data[k];
+	    else             // copy all
+	    {
+	        var d = {};
+	        for (k in this.custom_data)
+	            d[k] = this.custom_data[k];
+	        return d;
+	    }
+	};
+	LineKlassProto.Clean = function()
+	{
+	    this.DestroyPinedInsts();
+	    for(var k in this.custom_data)
+	        delete this.custom_data[k];
+	};
+	LineKlassProto.saveToJSON = function ()
+	{
+		return { "insts": this.pined_insts,
+		         "data": this.custom_data,
+		         "tlx": this.tlx,
+		         "tly": this.tly,
+                 "dh": this.deltaHeight,
+		       };
+	};
+	LineKlassProto.afterLoad = function (o)
+	{
+		this.pined_insts = o["insts"];
+		this.custom_data = o["data"];
+		this.tlx = o["tlx"];
+		this.tly = o["tly"];
+        this.deltaHeight = o["dh"];
+	};
 }());
 ;
 ;
@@ -17359,6 +19816,443 @@ cr.plugins_.Rex_Nickname = function (runtime) {
 }());
 ;
 ;
+cr.plugins_.Rex_SysExt = function(runtime)
+{
+	this.runtime = runtime;
+};
+(function ()
+{
+	var pluginProto = cr.plugins_.Rex_SysExt.prototype;
+	pluginProto.Type = function(plugin)
+	{
+		this.plugin = plugin;
+		this.runtime = plugin.runtime;
+	};
+	var typeProto = pluginProto.Type.prototype;
+	typeProto.onCreate = function()
+	{
+	};
+	pluginProto.Instance = function(type)
+	{
+		this.type = type;
+		this.runtime = type.runtime;
+	};
+	var instanceProto = pluginProto.Instance.prototype;
+	instanceProto.onCreate = function()
+	{
+        this.tmp_insts = [];
+	};
+    instanceProto._pick_all = function (objtype)
+	{
+        if (!objtype)
+            return false;
+		if (!objtype.instances.length)
+			return false;
+        var sol = objtype.getCurrentSol();
+        sol.select_all = true;
+		objtype.applySolToContainer();
+        return true;
+	};
+    instanceProto._pick_inverse = function (objtype, uid, is_pick_all)
+	{
+        if (!objtype)
+            return false;
+		if (!objtype.instances.length)
+			return false;
+        var sol = objtype.getCurrentSol();
+        if (is_pick_all==1)
+        {
+            sol.select_all = true;
+            cr.shallowAssignArray(sol.instances, sol.getObjects());
+        }
+        var insts = sol.instances;
+        var insts_length = insts.length;
+        var i, inst;
+        var index = -1;
+        for (i=0; i < insts_length; i++)
+        {
+            inst = insts[i];
+            if (inst.uid == uid)
+            {
+                index = i;
+                break;
+            }
+        }
+        if (index != -1)
+            cr.arrayRemove(insts, index);
+        sol.select_all = false;
+        objtype.applySolToContainer();
+        return (sol.instances.length != 0);
+	};
+    instanceProto._quick_pick = function (objtype, uid)
+	{
+        if (!objtype)
+            return;
+		if (!objtype.instances.length)
+			return;
+        var inst = this.runtime.getObjectByUID(uid);
+        var is_find = (inst != null);
+        if (is_find)
+        {
+            var type_name = inst.type.name;
+            if (objtype.is_family)
+            {
+                is_find = false;
+                var members = objtype.members;
+                var cnt = members.length;
+                var i;
+                for (i=0; i<cnt; i++)
+                {
+                    if (type_name == members[i].name)
+                    {
+                        is_find = true;
+                        break;
+                    }
+                }
+            }
+            else
+                is_find = (type_name == objtype.name);
+        }
+        var sol = objtype.getCurrentSol();
+        if (is_find)
+            sol.pick_one(inst);
+        else
+            sol.instances.length = 0;
+        sol.select_all = false;
+        objtype.applySolToContainer();
+        return is_find;
+	};
+    instanceProto._get_layer = function(layerparam)
+    {
+        return (typeof layerparam == "number")?
+               this.runtime.getLayerByNumber(layerparam):
+               this.runtime.getLayerByName(layerparam);
+    };
+	var GetInstPropertyValue = function(inst, prop_index)
+	{
+	    var val;
+	    switch(prop_index)
+	    {
+	    case 0:   // uid
+	        val = inst.uid;
+	        break;
+	    case 1:   // x
+	        val = inst.x;
+	        break;
+	    case 2:   // y
+	        val = inst.y;
+	        break;
+	    case 3:   // width
+	        val = inst.width;
+	        break;
+	    case 4:   // height
+	        val = inst.height;
+	        break;
+	    case 5:   // angle
+	        val = inst.angle;
+	        break;
+	    case 6:   // opacity
+	        val = inst.opacity;
+	        break;
+	    default:
+	        val = 0;
+	        break;
+	    }
+	    return val;
+	};
+	function Cnds() {};
+	pluginProto.cnds = new Cnds();
+	Cnds.prototype.PickAll = function (objtype)
+	{
+		return this._pick_all(objtype);;
+	};
+	Cnds.prototype.PickInverse = function (objtype, uid, is_pick_all)
+	{
+        return this._pick_inverse(objtype, uid, is_pick_all);
+	};
+	Cnds.prototype.QuickPickByUID = function (objtype, uid)
+	{
+        return this._quick_pick(objtype, uid);
+	};
+	function Acts() {};
+	pluginProto.acts = new Acts();
+    Acts.prototype.__PickByUID = function (objtype, uid, is_pick_all)
+	{
+        if (!objtype)
+            return;
+		if (!objtype.instances.length)
+			return;
+        var sol = objtype.getCurrentSol();
+        if (is_pick_all==1)
+            sol.select_all = true;
+        var insts = sol.getObjects();
+        var insts_length = insts.length;
+        var i, inst;
+        var is_find = false;
+        for (i=0; i < insts_length; i++)
+        {
+            inst = insts[i];
+            if (inst.uid == uid)
+            {
+                is_find = true;
+                break;
+            }
+        }
+        if (is_find)
+            sol.pick_one(inst);
+        else
+            sol.instances.length = 0;
+        sol.select_all = false;
+        objtype.applySolToContainer();
+	};
+    Acts.prototype.PickByPropCmp = function (objtype, prop_index, cmp, value, is_pick_all)
+	{
+        if (!objtype)
+            return;
+		if (!objtype.instances.length)
+			return;
+        var sol = objtype.getCurrentSol();
+        if (is_pick_all==1)
+            sol.select_all = true;
+        var insts = sol.getObjects();
+        var insts_length = insts.length;
+        var i, inst;
+        this.tmp_insts.length = 0;
+        for (i=0; i < insts_length; i++)
+        {
+            inst = insts[i];
+            if (cr.do_cmp(GetInstPropertyValue(inst, prop_index), cmp, value))
+                this.tmp_insts.push(inst);
+        }
+        cr.shallowAssignArray(sol.instances, this.tmp_insts);
+        sol.select_all = false;
+	};
+    Acts.prototype.__PickInverse = function (objtype, uid, is_pick_all)
+	{
+        this._pick_inverse(objtype, uid, is_pick_all);
+	};
+    Acts.prototype.PickAll = function (objtype)
+	{
+        if (!objtype)
+            return;
+        var sol = objtype.getCurrentSol();
+        sol.select_all = true;
+		objtype.applySolToContainer();
+	};
+    Acts.prototype.PickByUID = function (objtype, uid)
+	{
+		var i, len, j, inst, families, instances, sol;
+        if (!objtype)
+            return;
+        inst = this.runtime.getObjectByUID(uid);
+        if (!inst)
+        	return;
+        sol = objtype.getCurrentSol();
+        if (!sol.select_all && sol.instances.indexOf(inst) === -1)
+        	return;		// not picked
+        if (objtype.is_family)
+        {
+        	families = objtype.families;
+        	for (i = 0, len = families.length; i < len; i++)
+        	{
+        		if (families[i] === inst.type)
+        		{
+        			sol.pick_one(inst);
+        			objtype.applySolToContainer();
+        			return;
+        		}
+        	}
+        }
+        else if (inst.type === objtype)
+        {
+        	sol.pick_one(inst);
+        	objtype.applySolToContainer();
+        	return;
+        }
+	};
+    Acts.prototype.PickInverse = function (objtype, uid, is_pick_all)
+	{
+	    var i, len, j, inst, families, instances, sol;
+        if (!objtype)
+            return;
+        sol = objtype.getCurrentSol();
+        if (is_pick_all)
+        {
+            sol.select_all = true;
+        }
+        if (sol.select_all)
+        {
+        	sol.select_all = false;
+        	sol.instances.length = 0;
+        	instances = objtype.instances;
+        	for (i = 0, len = instances.length; i < len; i++)
+        	{
+        		inst = instances[i];
+        		if (inst.uid !== uid)
+        			sol.instances.push(inst);
+        	}
+        	objtype.applySolToContainer();
+        	return;
+        }
+        else
+        {
+        	for (i = 0, j = 0, len = sol.instances.length; i < len; i++)
+        	{
+        		inst = sol.instances[i];
+        		sol.instances[j] = inst;
+        		if (inst.uid !== uid)
+        			j++;
+        	}
+        	sol.instances.length = j;
+        	objtype.applySolToContainer();
+        	return;
+        }
+	};
+    Acts.prototype.SetGroupActive = function (group, active)
+    {
+		var g = this.runtime.groups_by_name[group.toLowerCase()];
+		if (!g)
+			return;
+		switch (active) {
+		case 0:
+			g.setGroupActive(false);
+			break;
+		case 1:
+			g.setGroupActive(true);
+			break;
+		case 2:
+			g.setGroupActive(!g.group_active);
+			break;
+		}
+    };
+    Acts.prototype.SetLayerVisible = function (layerparam, visible_)
+    {
+        var layer;
+		if (cr.is_number(layerparam))
+			layer = this.runtime.getLayerByNumber(layerparam);
+		else
+			layer = this.runtime.getLayerByName(layerparam);
+        if (!layer)
+            return;
+        var is_visible = (visible_ == 1);
+		if (layer.visible !== is_visible)
+		{
+			layer.visible = is_visible;
+			this.runtime.redraw = true;
+		}
+    };
+    Acts.prototype.SwapPosByUID = function (uidA, uidB)
+    {
+        var instA = this.runtime.getObjectByUID(uidA);
+        var instB = this.runtime.getObjectByUID(uidB);
+        if (!instA || !instB)
+            return;
+        var pxA = instA.x, pyA = instA.y;
+        var pxB = instB.x, pyB = instB.y;
+        instA.x = pxB; instA.y = pyB;
+        instB.x = pxA; instB.y = pyA;
+        instA.set_bbox_changed();
+        instB.set_bbox_changed();
+    };
+	function Exps() {};
+	pluginProto.exps = new Exps();
+    Exps.prototype.Eval = function (ret, code_string)
+	{
+	    ret.set_any( eval( "("+code_string+")" ) );
+	};
+    Exps.prototype.ToHexString = function (ret, decval)
+	{
+	    ret.set_string( decval.toString(16) );
+	};
+    Exps.prototype.ToDecimalMark = function (ret, number_in, locales)
+	{
+	    ret.set_string( number_in.toLocaleString(locales) );
+	};
+    Exps.prototype.String2ByteCount = function (ret, s)
+	{
+	    var c = encodeURI(s).split(/%..|./).length - 1;
+	    ret.set_int( c );
+	};
+    Exps.prototype.SubString = function (ret, s, start, end)
+	{
+	    ret.set_string( s.substring(start, end) );
+	};
+    Exps.prototype.ToFixed = function (ret, n, dig)
+	{
+        if (dig == null)
+            dig = 10;
+	    ret.set_string( n["toFixed"](dig) );
+	};
+    Exps.prototype.ToPrecision = function (ret, n, dig)
+	{
+        if (dig == null)
+            dig = 10;
+	    ret.set_string( n["toPrecision"](dig) );
+	};
+    Exps.prototype.ToFixedNumber = function (ret, n, dig)
+	{
+        if (dig == null)
+            dig = 10;
+        var val = n["toFixed"](dig);
+	    ret.set_float( parseFloat( val ) );
+	};
+    Exps.prototype.Newline = function (ret, cnt)
+	{
+        if (cnt == null)
+            cnt = 1;
+        var i, s = "";
+        for (i=0; i<cnt; i++)
+            s += "\n";
+	    ret.set_string( s );
+	};
+    Exps.prototype.NormalRandom = function (ret, mean, stddev)
+	{
+        var u, v, r
+		do
+        {
+			u = 2*Math.random() -1;
+			v = 2*Math.random() -1;
+			r = u*u + v*v;
+		} while (r > 1 || r == 0);
+		var gauss = u * Math.sqrt(-2*Math.log(r)/r);
+	    ret.set_float( mean + gauss*stddev );
+	};
+    Exps.prototype.NormalRandomApproximation = function (ret, mean, stddev)
+	{
+        var g=0;
+        for (var i=0; i<6; i++)
+            g += Math.random();
+		g = (g - 3) / 3;
+	    ret.set_float( mean + g*stddev );
+	};
+	Exps.prototype.ReflectionAngle = function (ret, inputA, normalA)
+	{
+	    var normalangle = cr.to_radians(normalA);
+        var startangle = cr.to_radians(inputA);
+		var vx = Math.cos(startangle);
+		var vy = Math.sin(startangle);
+		var nx = Math.cos(normalangle);
+		var ny = Math.sin(normalangle);
+		var v_dot_n = vx * nx + vy * ny;
+		var rx = vx - 2 * v_dot_n * nx;
+		var ry = vy - 2 * v_dot_n * ny;
+        var ra = cr.angleTo(0, 0, rx, ry);
+	    ret.set_float(cr.to_degrees(ra));
+	};
+    var num2base32 = ["0","1","2","3","4","5","6","7","8","9",
+                                 "b","c","d","e","f","g","h","j","k","m",
+                                 "n","p","q","r","s","t","u","v","w","x",
+                                 "y","z"];
+    Exps.prototype.RandomBase32 = function (ret, dig)
+	{
+        var o = "";
+        for (var i=0;i<dig;i++)
+            o += num2base32[ Math.floor( Math.random()*32 ) ];
+	    ret.set_string( o );
+	};
+}());
+;
+;
 cr.plugins_.Rex_TimeAway = function(runtime)
 {
 	this.runtime = runtime;
@@ -17455,6 +20349,139 @@ cr.plugins_.Rex_TimeAway = function(runtime)
         var nowtime = today.getTime();
         var delta = (isNaN(save_time))? 0 : (nowtime - save_time);
         ret.set_float(delta/1000);
+	};
+}());
+;
+;
+cr.plugins_.Rex_WaitEvent = function(runtime)
+{
+	this.runtime = runtime;
+};
+(function ()
+{
+	var pluginProto = cr.plugins_.Rex_WaitEvent.prototype;
+	pluginProto.Type = function(plugin)
+	{
+		this.plugin = plugin;
+		this.runtime = plugin.runtime;
+	};
+	var typeProto = pluginProto.Type.prototype;
+	typeProto.onCreate = function()
+	{
+	};
+	pluginProto.Instance = function(type)
+	{
+		this.type = type;
+		this.runtime = type.runtime;
+	};
+	var instanceProto = pluginProto.Instance.prototype;
+	instanceProto.onCreate = function()
+	{
+	    this.events = {};
+		this.exp_EventName = "";
+        this.exp_Tag = null;
+	};
+	var isEmpty = function(o)
+	{
+		for (var k in o)
+		    return false;
+		return true;
+	};
+    instanceProto.saveToJSON = function ()
+	{
+		return { "evts": this.events,
+                 "ename": this.exp_EventName,
+                 "tag": this.exp_Tag,
+                };
+	};
+	instanceProto.loadFromJSON = function (o)
+	{
+		this.events = o["evts"];
+        this.exp_EventName = o["ename"];
+        this.exp_Tag = o["tag"];
+	};
+	instanceProto.eventExist = function (event_name, tag)
+	{
+        return (this.events[tag] != null) && (this.events[tag][event_name] != null);
+	};
+	instanceProto.runTrigEvent = function (method, tag, event_name)
+	{
+        this.exp_EventName = event_name;
+        this.exp_Tag = tag;
+        this.runtime.trigger(method, this);
+        this.exp_Tag = null;
+	};
+	function Cnds() {};
+	pluginProto.cnds = new Cnds();
+	Cnds.prototype.OnAllEventsFinished = function(tag)
+	{
+		return (this.exp_Tag === tag);
+	};
+	Cnds.prototype.OnAnyEventFinished = function(tag)
+	{
+		return (this.exp_Tag === tag);
+	};
+	Cnds.prototype.NoWaitEvent = function(tag)
+	{
+		var e=this.events[tag];
+		if (e == null)
+		    return true;
+		var k;
+		for (k in e)
+		{
+		    return false;
+		}
+		return true;
+	};
+	Cnds.prototype.OnAnyEventStart = function()
+	{
+		return true;
+	};
+	Cnds.prototype.IsWaiting = function(event_name, tag)
+	{
+		return (this.events[tag] && this.events[tag][event_name]);
+	};
+	function Acts() {};
+	pluginProto.acts = new Acts();
+	Acts.prototype.WaitEvent = function(event_name, tag)
+	{
+	    if (!this.events.hasOwnProperty(tag))
+		    this.events[tag] = {};
+        if (this.events[tag].hasOwnProperty(event_name))
+            return;
+	    this.events[tag][event_name] = true;
+        var cnds = cr.plugins_.Rex_WaitEvent.prototype.cnds;
+        this.runTrigEvent(cnds.OnAnyEventStart, tag, event_name);
+	};
+	Acts.prototype.EventFinished = function(event_name, tag)
+	{
+	    if (!this.eventExist(event_name, tag))
+		    return;
+        var cnds = cr.plugins_.Rex_WaitEvent.prototype.cnds;
+		this.exp_EventName = event_name;
+	    delete this.events[tag][event_name];
+        this.runTrigEvent(cnds.OnAnyEventFinished, tag, event_name);
+		if (isEmpty(this.events[tag]))
+		{
+			delete this.events[tag];
+            this.runTrigEvent(cnds.OnAllEventsFinished, tag, event_name);
+        }
+	};
+	Acts.prototype.CancelEvents = function(tag)
+	{
+	    if (!this.events.hasOwnProperty(tag))
+		    return;
+		delete this.events[tag];
+	};
+	function Exps() {};
+	pluginProto.exps = new Exps();
+	Exps.prototype.CurEventName = function(ret)
+	{
+		ret.set_string(this.exp_EventName);
+	};
+	Exps.prototype.CurTag = function(ret)
+	{
+		ret.set_string(this.exp_Tag || "");
 	};
 }());
 ;
@@ -21541,218 +24568,6 @@ cr.plugins_.WebStorage = function(runtime)
 }());
 ;
 ;
-cr.plugins_.filechooser = function(runtime)
-{
-	this.runtime = runtime;
-};
-(function ()
-{
-	var pluginProto = cr.plugins_.filechooser.prototype;
-	pluginProto.Type = function(plugin)
-	{
-		this.plugin = plugin;
-		this.runtime = plugin.runtime;
-	};
-	var typeProto = pluginProto.Type.prototype;
-	typeProto.onCreate = function()
-	{
-	};
-	pluginProto.Instance = function(type)
-	{
-		this.type = type;
-		this.runtime = type.runtime;
-	};
-	var instanceProto = pluginProto.Instance.prototype;
-	var c2URL = window["URL"] || window["webkitURL"] || window["mozURL"] || window["msURL"];
-	instanceProto.onCreate = function()
-	{
-		if (this.runtime.isDomFree)
-		{
-			cr.logexport("[Construct 2] File Chooser plugin not supported on this platform - the object will not be created");
-			return;
-		}
-		this.elem = document.createElement("input");
-		this.elem.type = "file";
-		this.elem.setAttribute("accept", this.properties[0]);
-		if (this.properties[1] !== 0)		// multiple selection
-			this.elem.setAttribute("multiple", "");
-		this.elem.id = this.properties[3];
-		jQuery(this.elem).appendTo(this.runtime.canvasdiv ? this.runtime.canvasdiv : "body");
-		this.element_hidden = false;
-		if (this.properties[2] === 0)
-		{
-			jQuery(this.elem).hide();
-			this.visible = false;
-			this.element_hidden = true;
-		}
-		var self = this;
-		this.elem.onchange = function ()
-		{
-			self.runtime.trigger(cr.plugins_.filechooser.prototype.cnds.OnChanged, self);
-		};
-		this.lastLeft = 0;
-		this.lastTop = 0;
-		this.lastRight = 0;
-		this.lastBottom = 0;
-		this.lastWinWidth = 0;
-		this.lastWinHeight = 0;
-		this.updatePosition(true);
-		this.runtime.tickMe(this);
-	};
-	instanceProto.onDestroy = function ()
-	{
-		if (this.runtime.isDomFree)
-			return;
-		jQuery(this.elem).remove();
-		this.elem = null;
-	};
-	instanceProto.tick = function ()
-	{
-		this.updatePosition();
-	};
-	var last_canvas_offset = null;
-	var last_checked_tick = -1;
-	instanceProto.updatePosition = function (first)
-	{
-		if (this.runtime.isDomFree)
-			return;
-		var left = this.layer.layerToCanvas(this.x, this.y, true);
-		var top = this.layer.layerToCanvas(this.x, this.y, false);
-		var right = this.layer.layerToCanvas(this.x + this.width, this.y + this.height, true);
-		var bottom = this.layer.layerToCanvas(this.x + this.width, this.y + this.height, false);
-		var rightEdge = this.runtime.width / this.runtime.devicePixelRatio;
-		var bottomEdge = this.runtime.height / this.runtime.devicePixelRatio;
-		if (!this.visible || !this.layer.visible || right <= 0 || bottom <= 0 || left >= rightEdge || top >= bottomEdge)
-		{
-			if (!this.element_hidden)
-				jQuery(this.elem).hide();
-			this.element_hidden = true;
-			return;
-		}
-		if (left < 1)
-			left = 1;
-		if (top < 1)
-			top = 1;
-		if (right >= rightEdge)
-			right = rightEdge - 1;
-		if (bottom >= bottomEdge)
-			bottom = bottomEdge - 1;
-		var curWinWidth = window.innerWidth;
-		var curWinHeight = window.innerHeight;
-		if (!first && this.lastLeft === left && this.lastTop === top && this.lastRight === right && this.lastBottom === bottom && this.lastWinWidth === curWinWidth && this.lastWinHeight === curWinHeight)
-		{
-			if (this.element_hidden)
-			{
-				jQuery(this.elem).show();
-				this.element_hidden = false;
-			}
-			return;
-		}
-		this.lastLeft = left;
-		this.lastTop = top;
-		this.lastRight = right;
-		this.lastBottom = bottom;
-		this.lastWinWidth = curWinWidth;
-		this.lastWinHeight = curWinHeight;
-		if (this.element_hidden)
-		{
-			jQuery(this.elem).show();
-			this.element_hidden = false;
-		}
-		var offx = Math.round(left) + jQuery(this.runtime.canvas).offset().left;
-		var offy = Math.round(top) + jQuery(this.runtime.canvas).offset().top;
-		jQuery(this.elem).css("position", "absolute");
-		jQuery(this.elem).offset({left: offx, top: offy});
-		jQuery(this.elem).width(Math.round(right - left));
-		jQuery(this.elem).height(Math.round(bottom - top));
-	};
-	instanceProto.draw = function(ctx)
-	{
-	};
-	instanceProto.drawGL = function(glw)
-	{
-	};
-	function Cnds() {};
-	Cnds.prototype.OnChanged = function ()
-	{
-		return true;
-	};
-	pluginProto.cnds = new Cnds();
-	function Acts() {};
-	Acts.prototype.SetVisible = function (vis)
-	{
-		if (this.runtime.isDomFree)
-			return;
-		this.visible = (vis !== 0);
-	};
-	Acts.prototype.SetCSSStyle = function (p, v)
-	{
-		if (this.runtime.isDomFree)
-			return;
-		jQuery(this.elem).css(p, v);
-	};
-	Acts.prototype.ReleaseFile = function (f)
-	{
-		if (this.runtime.isDomFree)
-			return;
-		if (c2URL && c2URL["revokeObjectURL"])
-			c2URL["revokeObjectURL"](f);
-	};
-	pluginProto.acts = new Acts();
-	function Exps() {};
-	Exps.prototype.FileCount = function (ret)
-	{
-		ret.set_int(this.runtime.isDomFree ? 0 : (this.elem["files"].length || 0));
-	};
-	function getFileAt(files, index)
-	{
-		if (!files)
-			return null;
-		index = Math.floor(index);
-		if (index < 0 || index >= files.length)
-			return null;
-		return files[index];
-	};
-	Exps.prototype.FileNameAt = function (ret, i)
-	{
-		var file = this.runtime.isDomFree ? null : getFileAt(this.elem["files"], i);
-		ret.set_string(file ? (file["name"] || "") : "");
-	};
-	Exps.prototype.FileSizeAt = function (ret, i)
-	{
-		var file = this.runtime.isDomFree ? null : getFileAt(this.elem["files"], i);
-		ret.set_int(file ? (file["size"] || 0) : 0);
-	};
-	Exps.prototype.FileTypeAt = function (ret, i)
-	{
-		var file = this.runtime.isDomFree ? null : getFileAt(this.elem["files"], i);
-		ret.set_string(file ? (file["type"] || "") : "");
-	};
-	Exps.prototype.FileURLAt = function (ret, i)
-	{
-		var file = this.runtime.isDomFree ? null : getFileAt(this.elem["files"], i);
-		if (!file)
-		{
-			ret.set_string("");
-		}
-		else if (file["c2url"])		// already created object URL
-		{
-			ret.set_string(file["c2url"]);
-		}
-		else if (c2URL && c2URL["createObjectURL"])
-		{
-			file["c2url"] = c2URL["createObjectURL"](file);
-			ret.set_string(file["c2url"]);
-		}
-		else
-		{
-			ret.set_string("");
-		}
-	};
-	pluginProto.exps = new Exps();
-}());
-;
-;
 cr.plugins_.rex_TagText = function (runtime) {
     this.runtime = runtime;
 };
@@ -25277,6 +28092,1052 @@ cr.behaviors.Rex_Button2 = function(runtime)
 }());
 ;
 ;
+cr.behaviors.Rex_DragDrop2 = function(runtime)
+{
+	this.runtime = runtime;
+};
+(function ()
+{
+	function GetThisBehavior(inst)
+	{
+		var i, len;
+		for (i = 0, len = inst.behavior_insts.length; i < len; i++)
+		{
+			if (inst.behavior_insts[i] instanceof behaviorProto.Instance)
+				return inst.behavior_insts[i];
+		}
+		return null;
+	};
+	var behaviorProto = cr.behaviors.Rex_DragDrop2.prototype;
+	behaviorProto.Type = function(behavior, objtype)
+	{
+		this.behavior = behavior;
+		this.objtype = objtype;
+		this.runtime = behavior.runtime;
+        this.touchwrap = null;
+	};
+	behaviorProto.TouchWrapGet = function ()
+	{
+        if (this.touchwrap != null)
+            return this.touchwrap;
+;
+        var plugins = this.runtime.types
+        var name, inst;
+        for (name in plugins)
+        {
+            inst = plugins[name].instances[0];
+            if (inst instanceof cr.plugins_.rex_TouchWrap.prototype.Instance)
+            {
+                this.touchwrap = inst;
+                this.touchwrap.HookMe(this);
+                return this.touchwrap;
+            }
+        }
+;
+	};
+    behaviorProto.OnTouchStart = function (touch_src, touchX, touchY)
+    {
+        this.DragDetecting(touchX, touchY, touch_src);
+    };
+    behaviorProto.OnTouchEnd = function (touch_src)
+    {
+        var insts = this.my_instances.valuesRef();
+        var i, cnt=insts.length, inst, behavior_inst;
+        for (i=0; i<cnt; i++ )
+        {
+		    inst = insts[i];
+		    if (!inst)
+		    {
+		        continue;
+		    }
+            behavior_inst = GetThisBehavior(inst);
+            if (behavior_inst == null)
+                continue;
+			if ((behavior_inst.drag_info.touch_src == touch_src) && behavior_inst.drag_info.is_on_dragged)
+            {
+                behavior_inst.DragSrcSet(null);
+			}
+        }
+    };
+	var _behavior_insts = [];
+	behaviorProto.DragDetecting = function(touchX, touchY, touch_src)
+	{
+        var arr = this.my_instances.valuesRef();
+        var i, cnt=arr.length;
+        var inst, behavior_inst;
+        var lx, ly;
+        _behavior_insts.length = 0;
+        for (i=0; i<cnt; i++ )
+        {
+		    inst = arr[i];
+		    if (!inst)
+		        continue;
+            behavior_inst = GetThisBehavior(inst);
+            if (behavior_inst == null)
+                continue;
+            else if (!behavior_inst.enabled)
+                continue;
+            else if (behavior_inst.drag_info.is_on_dragged)
+                continue;
+            lx = inst.layer.canvasToLayer(touchX, touchY, true);
+			ly = inst.layer.canvasToLayer(touchX, touchY, false);
+			inst.update_bbox();
+			if (inst.contains_pt(lx, ly))
+                _behavior_insts.push(behavior_inst);
+        }
+        cnt = _behavior_insts.length;
+		if (cnt == 0)
+		    return false;
+        var target_inst_behavior = _behavior_insts[0];
+        var instB=target_inst_behavior.inst, instA;
+        for (i=1; i<cnt; i++ )
+        {
+            behavior_inst = _behavior_insts[i];
+            instA = behavior_inst.inst;
+            if ( ( instA.layer.index > instB.layer.index) ||
+                 ( (instA.layer.index == instB.layer.index) && (instA.get_zindex() > instB.get_zindex()) ) )
+            {
+                target_inst_behavior = behavior_inst;
+                instB = instA;
+            }
+        }
+		target_inst_behavior.DragSrcSet(touch_src);
+        _behavior_insts.length = 0;
+        return true;  // get drag inst
+	};
+	var behtypeProto = behaviorProto.Type.prototype;
+	behtypeProto.onCreate = function()
+	{
+	};
+	behaviorProto.Instance = function(type, inst)
+	{
+		this.type = type;
+		this.behavior = type.behavior;
+		this.inst = inst;				// associated object instance to modify
+		this.runtime = type.runtime;
+        this.behavior.TouchWrapGet();
+	};
+	var behinstProto = behaviorProto.Instance.prototype;
+	behinstProto.onCreate = function()
+	{
+        this.enabled = (this.properties[0]===1);
+        this.move_axis = this.properties[1];
+        this.setAxisAngle(this.properties[2]);
+        if (!this.recycled)
+        {
+            this.drag_info = new DragInfoKlass(this);
+        }
+        this.drag_info.init(this);
+	};
+	behinstProto.setAxisAngle = function (a)
+	{
+        this.axis_angle = a;
+        this.axis_rad = cr.to_clamped_radians(this.axis_angle);  // in radians
+	};
+    var P0={},P1={};
+	behinstProto.tick = function ()
+	{
+        if (!(this.enabled && this.drag_info.is_on_dragged))
+            return;
+        var inst=this.inst;
+        var drag_info=this.drag_info;
+        var cur_x=this.GetTouchX();
+        var cur_y=this.GetTouchY();
+        var is_moving = (drag_info.pre_x != cur_x) ||
+                        (drag_info.pre_y != cur_y);
+        if ( is_moving )
+        {
+            var new_x, new_y;
+            if (this.move_axis === 0)
+            {
+                new_x = cur_x + drag_info.drag_dx;
+                new_y = cur_y + drag_info.drag_dy;
+            }
+            else if (this.axis_rad === 0)
+            {
+                if (this.move_axis === 1)
+                {
+                    new_x = cur_x + drag_info.drag_dx;
+                    new_y = inst.y;
+                }
+                else
+                {
+                    new_x = inst.x;
+                    new_y = cur_y + drag_info.drag_dy;
+                }
+            }
+            else
+            {
+                P0.x = inst.x;
+                P0.y = inst.y;
+                P1.x = cur_x + drag_info.drag_dx;
+                P1.y = cur_y + drag_info.drag_dy;
+                rotate_point(P1, P0, -this.axis_rad);
+                if (this.move_axis === 1)
+                    P1.y = P0.y;
+                else
+                    P1.x = P0.x;
+                rotate_point(P1, P0, this.axis_rad);
+                new_x = P1.x;
+                new_y = P1.y;
+            }
+            inst.x = new_x;
+            inst.y = new_y;
+            inst.set_bbox_changed();
+            drag_info.pre_x = cur_x;
+            drag_info.pre_y = cur_y;
+        }
+        this.drag_info.IsMovingSet(is_moving);
+	};
+    var rotate_point = function(p1, p0, angle)
+    {
+        var new_angle = cr.angleTo(p0.x, p0.y, p1.x, p1.y) + angle;
+        var d = cr.distanceTo(p0.x, p0.y, p1.x, p1.y);
+        p1.x = p0.x + (d * Math.cos(new_angle));
+        p1.y = p0.y + (d * Math.sin(new_angle));
+        return p1;
+    }
+	behinstProto.GetTouchX = function()
+	{
+	    if (this.drag_info.touch_src == -1)
+	        return 0;
+        var touch_obj = this.behavior.TouchWrapGet();
+        return touch_obj.XForID(this.drag_info.touch_src, this.inst.layer.index);
+	};
+	behinstProto.GetTouchY = function()
+	{
+	    if (this.drag_info.touch_src == -1)
+	        return 0;
+        var touch_obj = this.behavior.TouchWrapGet();
+        return touch_obj.YForID(this.drag_info.touch_src, this.inst.layer.index);
+	};
+	behinstProto.DragSrcSet = function (src)
+	{
+	    this.drag_info.DragSrcSet(src);
+	};
+	var DragInfoKlass = function (plugin)
+	{
+	};
+	var DragInfoKlassProto = DragInfoKlass.prototype;
+	DragInfoKlassProto.init = function (plugin)
+	{
+	    this.plugin = plugin;
+        this.touch_src = -1;
+		this.pre_x = 0;
+        this.pre_y = 0;
+        this.drag_dx = 0;
+        this.drag_dy = 0;
+        this.is_on_dragged = false;
+        this.drag_start_x = 0;
+        this.drag_start_y = 0;
+        this.inst_start_x = plugin.inst.x;
+        this.inst_start_y = plugin.inst.y;
+        this.is_moving = false;
+	};
+	DragInfoKlassProto.DragSrcSet = function(touch_src)
+	{
+	    if (touch_src == null)
+	    {
+            this.is_on_dragged = false;
+	        this.plugin.runtime.trigger(cr.behaviors.Rex_DragDrop2.prototype.cnds.OnDrop, this.plugin.inst);
+		    this.touch_src = -1;
+	    }
+	    else
+	    {
+            this.is_on_dragged = true;
+		    this.touch_src = touch_src;
+	        var inst = this.plugin.inst;
+            var cur_x=this.plugin.GetTouchX(), cur_y=this.plugin.GetTouchY();
+            this.drag_dx = inst.x - cur_x;
+            this.drag_dy = inst.y - cur_y;
+            this.pre_x = cur_x;
+            this.pre_y = cur_y;
+            this.drag_start_x = cur_x;
+            this.drag_start_y = cur_y;
+            this.inst_start_x = inst.x;
+            this.inst_start_y = inst.y;
+            this.plugin.runtime.trigger(cr.behaviors.Rex_DragDrop2.prototype.cnds.OnDragStart, this.plugin.inst);
+        }
+        this.IsMovingSet(false);
+	};
+	DragInfoKlassProto.ForceDrop = function ()
+	{
+        if (this.is_on_dragged)
+        {
+            this.plugin.runtime.trigger(cr.behaviors.Rex_DragDrop2.prototype.cnds.OnDrop, this.plugin.inst);
+		    this.is_on_dragged = false;
+        }
+	};
+	DragInfoKlassProto.IsMovingSet = function(is_moving)
+	{
+        if ((!this.is_moving) && is_moving)
+        {
+            this.plugin.runtime.trigger(cr.behaviors.Rex_DragDrop2.prototype.cnds.OnDragMoveStart, this.plugin.inst);
+        }
+        else if (this.is_moving && (!is_moving))
+        {
+            this.plugin.runtime.trigger(cr.behaviors.Rex_DragDrop2.prototype.cnds.OnDragMoveEnd, this.plugin.inst);
+        }
+        this.is_moving = is_moving;
+	};
+	DragInfoKlassProto.DragDistance = function ()
+	{
+	    if (!this.is_on_dragged)
+	        return 0;
+	    var startx = this.drag_start_x;
+	    var starty = this.drag_start_y;
+	    var endx = this.plugin.GetTouchX();
+	    var endy = this.plugin.GetTouchY();
+	    var d = cr.distanceTo(startx,starty,endx,endy);
+	    return d;
+	};
+	DragInfoKlassProto.DragAngle = function ()
+	{
+	    if (!this.is_on_dragged)
+	        return 0;
+	    var startx = this.drag_start_x;
+	    var starty = this.drag_start_y;
+	    var endx = this.plugin.GetTouchX();
+	    var endy = this.plugin.GetTouchY();
+	    var a = cr.angleTo(startx,starty,endx,endy);
+		a = cr.to_clamped_degrees(a);
+	    return a;
+	};
+	behinstProto.saveToJSON = function ()
+	{
+		return {
+            "en": this.enabled,
+            "aa": this.axis_angle,
+            };
+	};
+	behinstProto.loadFromJSON = function (o)
+	{
+		this.enabled = o["en"];
+        this.setAxisAngle(o["aa"]);
+	};
+	function Cnds() {};
+	behaviorProto.cnds = new Cnds();
+	Cnds.prototype.OnDragStart = function ()
+	{
+        return true;
+	};
+	Cnds.prototype.OnDrop = function ()
+	{
+		return true;
+	};
+ 	Cnds.prototype.IsDragging = function ()
+	{
+        return this.drag_info.is_on_dragged;
+    };
+ 	Cnds.prototype.OnDragMoveStart = function ()
+	{
+        return true;
+    };
+ 	Cnds.prototype.OnDragMove = function ()
+	{
+        return true;
+    };
+ 	Cnds.prototype.IsDraggingMoving = function ()
+	{
+        return this.drag_info.is_moving;
+    };
+ 	Cnds.prototype.OnDragMoveEnd = function ()
+	{
+        return true;
+    };
+	Cnds.prototype.CompareDragDistance = function (cmp, s)
+	{
+	    if (!this.drag_info.is_on_dragged)
+	        return false;
+		return cr.do_cmp(this.drag_info.DragDistance(), cmp, s);
+	};
+	Cnds.prototype.CompareDragAngle = function (cmp, s)
+	{
+	    if (!this.drag_info.is_on_dragged)
+	        return false;
+		return cr.do_cmp(this.drag_info.DragAngle(), cmp, s);
+	};
+ 	Cnds.prototype.IsEnabled = function ()
+	{
+        return this.enabled;
+    };
+	function Acts() {};
+	behaviorProto.acts = new Acts();
+	Acts.prototype.SetEnabled = function (s)
+	{
+		this.enabled = (s !== 0);
+	    this.drag_info.ForceDrop();
+	};
+	Acts.prototype.ForceDrop = function ()
+	{
+	    this.drag_info.ForceDrop();
+	};
+	Acts.prototype.TryDrag = function ()
+	{
+        if (this.drag_info.is_on_dragged)  // already dragged
+            return;
+        var touch_obj = this.behavior.TouchWrapGet();
+        if (!touch_obj.IsInTouch())       // no touched
+            return;
+        var touch_pts = touch_obj.touches;
+        var cnt=touch_pts.length;
+        var i, touch_pt, tx, ty;
+        var inst = this.inst;
+        inst.update_bbox();
+        for (i=0; i<cnt; i++)
+        {
+            touch_pt = touch_pts[i];
+            tx = inst.layer.canvasToLayer(touch_pt.x, touch_pt.y, true);
+            ty = inst.layer.canvasToLayer(touch_pt.x, touch_pt.y, false);
+            if (inst.contains_pt(tx,ty))     // has touched object
+            {
+		        this.DragSrcSet(i);
+                break;
+            }
+        }
+	};
+	Acts.prototype.SetAxisAngle = function (a)
+	{
+        this.setAxisAngle(a);
+	};
+	function Exps() {};
+	behaviorProto.exps = new Exps();
+	Exps.prototype.X = function (ret)
+	{
+        ret.set_float( this.GetTouchX() );
+	};
+	Exps.prototype.Y = function (ret)
+	{
+	    ret.set_float( this.GetTouchY() );
+	};
+	Exps.prototype.AbsoluteX = function (ret)
+	{
+        var x;
+	    if (this.drag_info.touch_src == -1)
+	        x = 0;
+        else
+        {
+            var touch_obj = this.behavior.touchwrap;
+            x = touch_obj.AbsoluteXForID(this.drag_info.touch_src);
+        }
+	    ret.set_float( x );
+	};
+	Exps.prototype.AbsoluteY = function (ret)
+	{
+        var y;
+	    if (this.drag_info.touch_src == -1)
+	        y = 0;
+        else
+        {
+            var touch_obj = this.behavior.touchwrap;
+            y = touch_obj.AbsoluteYForID(this.drag_info.touch_src);
+        }
+	    ret.set_float( y );
+	};
+	Exps.prototype.Activated = function (ret)
+	{
+		ret.set_int((this.enabled)? 1:0);
+	};
+	Exps.prototype.StartX = function (ret)
+	{
+        ret.set_float( this.drag_info.inst_start_x );
+	};
+	Exps.prototype.StartY = function (ret)
+	{
+	    ret.set_float( this.drag_info.inst_start_y );
+	};
+	Exps.prototype.DragStartX = function (ret)
+	{
+        ret.set_float( this.drag_info.drag_start_x );
+	};
+	Exps.prototype.DragStartY = function (ret)
+	{
+	    ret.set_float( this.drag_info.drag_start_y );
+	};
+	Exps.prototype.InstStartX = function (ret)
+	{
+        ret.set_float( this.drag_info.inst_start_x );
+	};
+	Exps.prototype.InstStartY = function (ret)
+	{
+	    ret.set_float( this.drag_info.inst_start_y );
+	};
+	Exps.prototype.DragDistance = function (ret)
+	{
+	    ret.set_float( this.drag_info.DragDistance() );
+	};
+	Exps.prototype.DragAngle = function (ret)
+	{
+	    ret.set_float( this.drag_info.DragAngle() );
+	};
+	Exps.prototype.AxisAngle = function (ret)
+	{
+	    ret.set_float( this.axis_angle );
+	};
+}());
+;
+;
+cr.behaviors.Rex_Slowdown = function(runtime)
+{
+	this.runtime = runtime;
+};
+(function ()
+{
+	var behaviorProto = cr.behaviors.Rex_Slowdown.prototype;
+	behaviorProto.Type = function(behavior, objtype)
+	{
+		this.behavior = behavior;
+		this.objtype = objtype;
+		this.runtime = behavior.runtime;
+	};
+	var behtypeProto = behaviorProto.Type.prototype;
+	behtypeProto.onCreate = function()
+	{
+	};
+	behaviorProto.Instance = function(type, inst)
+	{
+		this.type = type;
+		this.behavior = type.behavior;
+		this.inst = inst;				// associated object instance to modify
+		this.runtime = type.runtime;
+	};
+	var behinstProto = behaviorProto.Instance.prototype;
+	behinstProto.onCreate = function()
+	{
+        this.activated = (this.properties[0]==1);
+        this.dec = this.properties[1];
+        this.is_moving = false;
+		this.cur_speed = 0;
+		this.cur_angle = 0;
+		this.is_my_call = false;
+	};
+	behinstProto.tick = function ()
+	{
+	    if ((!this.activated) || (!this.is_moving))
+		    return;
+	    var dt = this.runtime.getDt(this.inst);
+		if (dt == 0)
+		    return;
+		this.cur_speed -= (this.dec* dt);
+		if (this.cur_speed <= 0)  // slow down to zero
+            this.stop();
+		else    // move inst
+		{
+		    var distance = this.cur_speed * dt;
+			this.inst.x += (distance * Math.cos(this.cur_angle));
+            this.inst.y += (distance * Math.sin(this.cur_angle));
+			this.inst.set_bbox_changed();
+		}
+	};
+	behinstProto.start = function(speed, angle)
+	{
+        this.is_moving = true;
+		this.cur_speed = speed;
+		this.cur_angle = cr.to_clamped_radians(angle);
+	};
+	behinstProto.stop = function()
+	{
+        this.is_moving = false;
+        this.cur_speed = 0;
+        this.is_my_call = true;
+        this.runtime.trigger(cr.behaviors.Rex_Slowdown.prototype.cnds.OnStop, this.inst);
+        this.is_my_call = false;
+	};
+    behinstProto.saveToJSON = function ()
+	{
+		return { "en": this.activated,
+		         "dec": this.dec,
+                 "is_m": this.is_moving,
+                 "spd" : this.cur_speed,
+                 "a" : this.cur_angle
+               };
+	};
+	behinstProto.loadFromJSON = function (o)
+	{
+        this.activated = o["en"];
+        this.dec = o["dec"];
+        this.is_moving = o["is_m"];
+		this.cur_speed = o["spd"];
+		this.cur_angle = o["a"];
+	};
+	function Cnds() {};
+	behaviorProto.cnds = new Cnds();
+	Cnds.prototype.OnStop = function ()
+	{
+        return this.is_my_call;
+	};
+	Cnds.prototype.IsMoving = function ()
+	{
+		return (this.activated && this.is_moving);
+	};
+	function Acts() {};
+	behaviorProto.acts = new Acts();
+	Acts.prototype.SetActivated = function (s)
+	{
+		this.activated = (s==1);
+	};
+	Acts.prototype.Start = function (speed, angle)
+	{
+	    this.start(speed, angle);
+	};
+	Acts.prototype.SetDeceleration = function (a)
+	{
+		this.dec = a;
+	};
+	Acts.prototype.Stop = function ()
+	{
+        this.stop();
+	};
+	function Exps() {};
+	behaviorProto.exps = new Exps();
+	Exps.prototype.Activated = function (ret)
+	{
+		ret.set_int((this.activated)? 1:0);
+	};
+	Exps.prototype.Speed = function (ret)
+	{
+		ret.set_float(this.cur_speed);
+	};
+ 	Exps.prototype.Dec = function (ret)
+	{
+		ret.set_float(this.dec);
+	};
+ 	Exps.prototype.MovingAngle = function (ret)
+	{
+		ret.set_float(cr.to_clamped_degrees(this.cur_angle));
+	};
+}());
+;
+;
+cr.behaviors.Rex_SpeedMoinitor = function(runtime)
+{
+	this.runtime = runtime;
+};
+(function ()
+{
+	var behaviorProto = cr.behaviors.Rex_SpeedMoinitor.prototype;
+	behaviorProto.Type = function(behavior, objtype)
+	{
+		this.behavior = behavior;
+		this.objtype = objtype;
+		this.runtime = behavior.runtime;
+	};
+	var behtypeProto = behaviorProto.Type.prototype;
+	behtypeProto.onCreate = function()
+	{
+	};
+	behaviorProto.Instance = function(type, inst)
+	{
+		this.type = type;
+		this.behavior = type.behavior;
+		this.inst = inst;
+		this.runtime = type.runtime;
+	};
+	var behinstProto = behaviorProto.Instance.prototype;
+	behinstProto.onCreate = function()
+	{
+	    this.pre_x = this.inst.x;
+	    this.pre_y = this.inst.y;
+	    this.dt = 0;
+		this._speed = 0;
+		this._angle = 0;
+	    this._is_moving = false;
+		this._last_speed = 0;
+		this._last_angle = 0;
+	};
+	behinstProto.tick = function ()
+	{
+	    this.dt = this.runtime.getDt(this.inst);
+	};
+	behinstProto.tick2 = function ()
+	{
+	    var inst = this.inst;
+	    var dx = inst.x - this.pre_x;
+	    var dy = inst.y - this.pre_y;
+	    this.pre_x = inst.x;
+	    this.pre_y = inst.y;
+		if ( ((dx != 0) || (dy !=0)) && (this.dt != 0))
+		{
+		    this._speed = Math.sqrt((dx*dx)+(dy*dy)) / this.dt;
+			this._angle  = cr.to_degrees(Math.atan2(dy, dx));
+		    this._last_speed = this._speed;
+		    this._last_angle = this._angle;
+		}
+		else
+		{
+		    this._speed = 0;
+		    this._angle = 0;
+		}
+		if ((!this._is_moving) && (this._speed != 0))
+		{
+		    this._is_moving = true;
+		    this.runtime.trigger(cr.behaviors.Rex_SpeedMoinitor.prototype.cnds.OnMovingStart, this.inst);
+		}
+		else if ((this._is_moving) && (this._speed == 0))
+		{
+		    this._is_moving = false;
+		    this.runtime.trigger(cr.behaviors.Rex_SpeedMoinitor.prototype.cnds.OnMovingStop, this.inst);
+		}
+	};
+	behinstProto.saveToJSON = function ()
+	{
+		return { "px": this.pre_x,
+                 "py": this.pre_y,
+		         "lx": this._last_speed,
+		         "la": this._last_angle,
+				 "im": this._is_moving
+				 };
+	};
+	behinstProto.loadFromJSON = function (o)
+	{
+		this.pre_x = o["px"];
+		this.pre_y = o["py"];
+		this._last_speed = o["lx"];
+		this._last_angle = o["la"];
+        this._is_moving = o["im"];
+	};
+	function Cnds() {};
+	behaviorProto.cnds = new Cnds();
+	Cnds.prototype.IsMoving = function ()
+	{
+		return (this._is_moving);
+	};
+    Cnds.prototype.OnMovingStart = function ()
+	{
+		return true;
+	};
+    Cnds.prototype.OnMovingStop = function ()
+	{
+		return true;
+	};
+	Cnds.prototype.CompareSpeed = function (cmp, s)
+	{
+		return cr.do_cmp(this._speed, cmp, s);
+	};
+	Cnds.prototype.CompareAngle = function (cmp, s)
+	{
+		return cr.do_cmp(this._angle, cmp, s);
+	};
+	function Acts() {};
+	behaviorProto.acts = new Acts();
+	function Exps() {};
+	behaviorProto.exps = new Exps();
+	Exps.prototype.Speed = function (ret)
+	{
+		ret.set_float(this._speed);
+	};
+	Exps.prototype.Angle = function (ret)
+	{
+		ret.set_float(this._angle);
+	};
+	Exps.prototype.LastSpeed = function (ret)
+	{
+		ret.set_float(this._last_speed);
+	};
+	Exps.prototype.LastAngle = function (ret)
+	{
+		ret.set_float(this._last_angle);
+	};
+}());
+;
+;
+cr.behaviors.Rex_TouchArea2 = function(runtime)
+{
+    this.runtime = runtime;
+};
+(function ()
+{
+    var behaviorProto = cr.behaviors.Rex_TouchArea2.prototype;
+    behaviorProto.Type = function(behavior, objtype)
+    {
+        this.behavior = behavior;
+        this.objtype = objtype;
+        this.runtime = behavior.runtime;
+    };
+    var behtypeProto = behaviorProto.Type.prototype;
+    behtypeProto.onCreate = function()
+    {
+        this.touchwrap = null;
+    };
+    behtypeProto.TouchWrapGet = function ()
+    {
+        if (this.touchwrap != null)
+            return;
+        var plugins = this.runtime.types;
+        var name, obj;
+        for (name in plugins)
+        {
+            obj = plugins[name].instances[0];
+            if ((obj != null) && (obj.check_name == "TOUCHWRAP"))
+            {
+                this.touchwrap = obj;
+                break;
+            }
+        }
+;
+    };
+    behaviorProto.Instance = function(type, inst)
+    {
+        this.type = type;
+        this.behavior = type.behavior;
+        this.inst = inst;				// associated object instance to modify
+        this.runtime = type.runtime;
+        type.TouchWrapGet();
+    };
+    var behinstProto = behaviorProto.Instance.prototype;
+    behinstProto.onCreate = function()
+    {
+        this.enabled = (this.properties[0]===1);
+        this.is_touched = false;
+        this.cur_touchX = -1;
+        this.cur_touchY = -1;
+        this.delta_touchX = 0;
+        this.delta_touchY = 0;
+        this.start_touchX = -1;
+        this.start_touchY = -1;
+        this._vectorX = -1;
+        this._vectorY = -1;
+        this._distance = -1;
+    };
+    behinstProto.tick = function ()
+    {
+        if (!this.enabled)
+            return;
+        var touch_obj = this.type.touchwrap;
+        var touch_pts = touch_obj.touches;
+        var cnt=touch_pts.length;
+        var is_touched = false;
+        var inst = this.inst;
+        inst.update_bbox();
+        var pre_tx = this.cur_touchX;
+        var pre_ty = this.cur_touchY;
+        if (touch_obj.IsInTouch())
+        {
+            var i, touch_pt, tx, ty;
+            for (i=0; i<cnt; i++)
+            {
+                touch_pt = touch_pts[i];
+                tx = inst.layer.canvasToLayer(touch_pt.x, touch_pt.y, true);
+                ty = inst.layer.canvasToLayer(touch_pt.x, touch_pt.y, false);
+                if (inst.contains_pt(tx,ty))
+                {
+                    this.cur_touchX = tx;
+                    this.cur_touchY = ty;
+                    is_touched = true;
+                    break;
+                }
+            }
+        }
+        this._vectorX = -1;
+        this._vectorY = -1
+        this._distance = -1;
+        var pre_is_touched = this.is_touched;
+        this.is_touched = is_touched;
+        if (pre_is_touched && is_touched)
+        {
+            this.delta_touchX = this.cur_touchX - pre_tx;
+            this.delta_touchY = this.cur_touchY - pre_ty;
+        }
+        else
+        {
+            this.delta_touchX = 0;
+            this.delta_touchY = 0;
+        }
+        if ((!pre_is_touched) && is_touched)
+        {
+            this.start_touchX = this.cur_touchX;
+            this.start_touchY = this.cur_touchY;
+            this.runtime.trigger(cr.behaviors.Rex_TouchArea2.prototype.cnds.OnTouchStart, inst);
+        }
+        if ((pre_tx != this.cur_touchX) || (pre_ty != this.cur_touchY))
+            this.runtime.trigger(cr.behaviors.Rex_TouchArea2.prototype.cnds.OnTouchMoving, inst);
+        if (pre_is_touched && (!is_touched))
+            this.runtime.trigger(cr.behaviors.Rex_TouchArea2.prototype.cnds.OnTouchEnd, inst);
+    };
+    behinstProto._dist_get = function ()
+    {
+        if (this._distance == -1)
+        {
+            this._distance = cr.distanceTo(this.start_touchX, this.start_touchY,
+                                           this.cur_touchX, this.cur_touchY);
+        }
+        return this._distance;
+    };
+    behinstProto._unit_vecXY_get = function ()
+    {
+        if ((this._vectorX != -1) || (this._vectorY != -1))
+            return;
+        if ((this.start_touchX == this.cur_touchX) &&
+            (this.start_touchY == this.cur_touchY))
+        {
+            this._vectorX = 0;
+            this._vectorY = 0;
+        }
+        else
+        {
+            var angle = cr.angleTo(this.start_touchX, this.start_touchY,
+                                this.cur_touchX, this.cur_touchY);
+            this._vectorX = Math.cos(angle);
+            this._vectorY = Math.sin(angle);
+        }
+    };
+    behinstProto._currx_get = function ()
+    {
+        var x = (this.is_touched)? this.cur_touchX: (-1);
+        return x;
+    };
+    behinstProto._curry_get = function ()
+    {
+        var y = (this.is_touched)? this.cur_touchY: (-1);
+        return y;
+    };
+    behinstProto._startx_get = function ()
+    {
+        var x = (this.is_touched)? this.start_touchX: (-1);
+        return x;
+    };
+    behinstProto._starty_get = function ()
+    {
+        var y = (this.is_touched)? this.start_touchY: (-1);
+        return y;
+    };
+    behinstProto._distance_get = function ()
+    {
+        var dist;
+        if (this.is_touched)
+        {
+            dist = this._dist_get();
+        }
+        else
+        {
+            dist = -1;
+        }
+        return dist;
+    };
+    behinstProto._angle_get = function ()
+    {
+        var angle;
+        if (this.is_touched)
+        {
+            angle = cr.angleTo(this.start_touchX, this.start_touchY,
+                            this.cur_touchX, this.cur_touchY);
+            angle = cr.to_clamped_degrees(angle);
+        }
+        else
+        {
+            angle = -1;
+        }
+        return angle;
+    };
+    behinstProto._vectorx_get = function ()
+    {
+        var vectX;
+        if (this.is_touched)
+        {
+            this._unit_vecXY_get();
+            vectX = this._vectorX;
+        }
+        else
+        {
+            vectX = 0;
+        }
+        return vectX;
+    };
+    behinstProto._vectory_get = function ()
+    {
+        var vectY;
+        if (this.is_touched)
+        {
+            this._unit_vecXY_get();
+            vectY = this._vectorY;
+        }
+        else
+        {
+            vectY = 0;
+        }
+        return vectY;
+    };
+    function Cnds() {};
+    behaviorProto.cnds = new Cnds();
+    Cnds.prototype.OnTouchStart = function ()
+    {
+        return true;
+    };
+    Cnds.prototype.OnTouchEnd = function ()
+    {
+        return true;
+    };
+    Cnds.prototype.IsInTouch = function ()
+    {
+        return this.is_touched;
+    };
+    Cnds.prototype.OnTouchMoving = function ()
+    {
+        return true;
+    };
+	Cnds.prototype.CompareDragDistance = function (cmp, s)
+	{
+        if (!this.is_touched)
+            return false;
+		return cr.do_cmp(this._distance_get(), cmp, s);
+	};
+	Cnds.prototype.CompareDragAngle = function (cmp, s)
+	{
+        if (!this.is_touched)
+            return false;
+		return cr.do_cmp(this._angle_get(), cmp, s);
+	};
+    function Acts() {};
+    behaviorProto.acts = new Acts();
+	Acts.prototype.SetEnabled = function (s)
+	{
+		this.enabled = (s !== 0);
+	};
+    function Exps() {};
+    behaviorProto.exps = new Exps();
+    Exps.prototype.X = function (ret)
+    {
+        ret.set_float(this._currx_get());
+    };
+    Exps.prototype.Y = function (ret)
+    {
+        ret.set_float(this._curry_get());
+    };
+    Exps.prototype.StartX = function (ret)
+    {
+        ret.set_float(this._startx_get());
+    };
+    Exps.prototype.StartY = function (ret)
+    {
+        ret.set_float(this._starty_get());
+    };
+    Exps.prototype.Distance = function (ret)
+    {
+        ret.set_float(this._distance_get());
+    };
+    Exps.prototype.Angle = function (ret)
+    {
+        ret.set_float(this._angle_get());
+    };
+    Exps.prototype.VectorX = function (ret)
+    {
+        ret.set_float(this._vectorx_get());
+    };
+    Exps.prototype.VectorY = function (ret)
+    {
+        ret.set_float(this._vectory_get());
+    };
+    Exps.prototype.DeltaX = function (ret)
+    {
+        ret.set_float(this.delta_touchX);
+    };
+    Exps.prototype.DeltaY = function (ret)
+    {
+        ret.set_float(this.delta_touchY);
+    };
+}());
+;
+;
 cr.behaviors.Rex_bNickname = function (runtime) {
 	this.runtime = runtime;
 };
@@ -25327,6 +29188,921 @@ cr.behaviors.Rex_bNickname = function (runtime) {
 	Exps.prototype.Nickname = function (ret) {
 		ret.set_any(this.nickname);
 	};
+}());
+;
+;
+cr.behaviors.Rex_boundary = function(runtime)
+{
+	this.runtime = runtime;
+};
+(function ()
+{
+	var behaviorProto = cr.behaviors.Rex_boundary.prototype;
+	behaviorProto.Type = function(behavior, objtype)
+	{
+		this.behavior = behavior;
+		this.objtype = objtype;
+		this.runtime = behavior.runtime;
+	};
+	var behtypeProto = behaviorProto.Type.prototype;
+	behtypeProto.onCreate = function()
+	{
+	};
+	behaviorProto.Instance = function(type, inst)
+	{
+		this.type = type;
+		this.behavior = type.behavior;
+		this.inst = inst;
+		this.runtime = type.runtime;
+	};
+	var behinstProto = behaviorProto.Instance.prototype;
+	var sortBoundary = function(boundary)
+	{
+	    if (boundary[1] < boundary[0])
+	    {
+	        var tmp = boundary[0];
+			boundary[0] = boundary[1];
+			boundary[1] = tmp;
+	    }
+	};
+	behinstProto.onCreate = function()
+	{
+		this.mode = this.properties[0];
+		this.alignMode = this.properties[1];
+        this.horizontalEnable = (this.properties[2]==1);
+        this.horizontalBoundary = [this.properties[3], this.properties[4]];
+        this.verticalEnable = (this.properties[5]==1);
+        this.verticalBoundary = [this.properties[6], this.properties[7]];
+        sortBoundary(this.horizontalBoundary);
+        sortBoundary(this.verticalBoundary);
+        this.horizontalBoundInstInfo = {"uid":(-1), "p0":null, "p1":null};
+        this.verticalBoundInstInfo = {"uid":(-1), "p0":null, "p1":null};
+	};
+	behinstProto.tick = function ()
+	{
+		var isReachedHorizontal, isReachedVertical;
+		if (this.mode == 0)
+		{
+		    isReachedHorizontal = this.clampH();
+		    isReachedVertical = this.clampV();
+        }
+		else if (this.mode == 1)
+		{
+		    isReachedHorizontal = this.wrapH();
+		    isReachedVertical = this.wrapV();
+		}
+		else if (this.mode == 2)
+		{
+		    isReachedHorizontal = this.modwrapH();
+		    isReachedVertical = this.modwrapV();
+		}
+		if (isReachedHorizontal || isReachedVertical)
+        {
+            this.runtime.trigger(cr.behaviors.Rex_boundary.prototype.cnds.OnHitAnyBoundary, this.inst);
+		    this.inst.set_bbox_changed();
+        }
+	};
+	behinstProto.updateH = function ()
+	{
+        var instInfo = this.horizontalBoundInstInfo;
+        var pin_inst = this.runtime.getObjectByUID(instInfo["uid"]);
+        if (pin_inst == null)
+            return;
+        this.horizontalBoundary[0] = pin_inst.getImagePoint(instInfo["p0"], true);
+        this.horizontalBoundary[1] = pin_inst.getImagePoint(instInfo["p1"], true);
+        sortBoundary(this.horizontalBoundary);
+	};
+	behinstProto.updateV = function ()
+	{
+        var instInfo = this.verticalBoundInstInfo;
+        var pin_inst = this.runtime.getObjectByUID(instInfo["uid"]);
+        if (pin_inst == null)
+            return;
+        this.verticalBoundary[0] = pin_inst.getImagePoint(instInfo["p0"], false);
+        this.verticalBoundary[1] = pin_inst.getImagePoint(instInfo["p1"], false);
+        sortBoundary(this.verticalBoundary);
+	};
+	behinstProto.clampH = function ()
+	{
+	    if (!this.horizontalEnable)
+		    return false;
+		var currentX = this.inst.x;
+		if (this.alignMode == 0)    // origin
+		{
+		    if (this.isReachedBound(1))
+            {
+		        this.inst.x = this.horizontalBoundary[0];
+                this.runtime.trigger(cr.behaviors.Rex_boundary.prototype.cnds.OnHitLeftBoundary, this.inst);
+            }
+            else if (this.isReachedBound(2))
+            {
+		        this.inst.x = this.horizontalBoundary[1];
+                this.runtime.trigger(cr.behaviors.Rex_boundary.prototype.cnds.OnHitRightBoundary, this.inst);
+            }
+		}
+		else    // boundaries
+		{
+		    this.inst.update_bbox();
+			var bbox = this.inst.bbox;
+		    if (this.isReachedBound(1))
+            {
+		        this.inst.x = this.horizontalBoundary[0] + (this.inst.x - bbox.left);
+                this.runtime.trigger(cr.behaviors.Rex_boundary.prototype.cnds.OnHitLeftBoundary, this.inst);
+            }
+            else if (this.isReachedBound(2))
+            {
+		        this.inst.x = this.horizontalBoundary[1] - (bbox.right - this.inst.x);
+                this.runtime.trigger(cr.behaviors.Rex_boundary.prototype.cnds.OnHitRightBoundary, this.inst);
+            }
+		}
+	    return (currentX != this.inst.x);
+	};
+	behinstProto.clampV = function ()
+	{
+	    if (!this.verticalEnable)
+		    return false;
+	    var currentY = this.inst.y;
+		if (this.alignMode == 0)    // origin
+		{
+		    if (this.isReachedBound(4))
+            {
+		        this.inst.y = this.verticalBoundary[0];
+                this.runtime.trigger(cr.behaviors.Rex_boundary.prototype.cnds.OnHitTopBoundary, this.inst);
+            }
+            else if (this.isReachedBound(8))
+            {
+		        this.inst.y = this.verticalBoundary[1];
+                this.runtime.trigger(cr.behaviors.Rex_boundary.prototype.cnds.OnHitBottomBoundary, this.inst);
+            }
+		}
+		else    // boundaries
+		{
+		    this.inst.update_bbox();
+			var bbox = this.inst.bbox;
+		    if (this.isReachedBound(4))
+            {
+		        this.inst.y = this.verticalBoundary[0] + (this.inst.y - bbox.top);
+                this.runtime.trigger(cr.behaviors.Rex_boundary.prototype.cnds.OnHitTopBoundary, this.inst);
+            }
+            else if (this.isReachedBound(8))
+            {
+		        this.inst.y = this.verticalBoundary[1] - (bbox.bottom - this.inst.y);
+                this.runtime.trigger(cr.behaviors.Rex_boundary.prototype.cnds.OnHitBottomBoundary, this.inst);
+            }
+		}
+	    return (currentY != this.inst.y);
+	};
+	behinstProto.wrapH = function ()
+	{
+	    if (!this.horizontalEnable)
+		    return false;
+		var currentX = this.inst.x;
+		if (this.alignMode == 0)    // origin
+		{
+		    if (this.isReachedBound(1))
+            {
+		        this.inst.x = this.horizontalBoundary[1] + 1;
+                this.runtime.trigger(cr.behaviors.Rex_boundary.prototype.cnds.OnHitLeftBoundary, this.inst);
+            }
+            else if (this.isReachedBound(2))
+            {
+		        this.inst.x = this.horizontalBoundary[0] - 1;
+                this.runtime.trigger(cr.behaviors.Rex_boundary.prototype.cnds.OnHitRightBoundary, this.inst);
+            }
+		}
+		else    // boundaries
+		{
+		    this.inst.update_bbox();
+			var bbox = this.inst.bbox;
+		    if (this.isReachedBound(1))
+            {
+		        this.inst.x = this.horizontalBoundary[1] + 1 + (bbox.right - this.inst.x);
+                this.runtime.trigger(cr.behaviors.Rex_boundary.prototype.cnds.OnHitLeftBoundary, this.inst);
+            }
+            else if (this.isReachedBound(2))
+            {
+		        this.inst.x = this.horizontalBoundary[0] - 1 - (this.inst.x - bbox.left);
+                this.runtime.trigger(cr.behaviors.Rex_boundary.prototype.cnds.OnHitRightBoundary, this.inst);
+            }
+		}
+	    return (currentX != this.inst.x);
+	};
+	behinstProto.wrapV = function ()
+	{
+	    if (!this.verticalEnable)
+		    return false;
+	    var currentY = this.inst.y;
+		if (this.alignMode == 0)    // origin
+		{
+		    if (this.isReachedBound(4))
+            {
+		        this.inst.y = this.verticalBoundary[1] + 1;
+                this.runtime.trigger(cr.behaviors.Rex_boundary.prototype.cnds.OnHitTopBoundary, this.inst);
+            }
+            else if (this.isReachedBound(8))
+            {
+		        this.inst.y = this.verticalBoundary[0] - 1;
+                this.runtime.trigger(cr.behaviors.Rex_boundary.prototype.cnds.OnHitBottomBoundary, this.inst);
+            }
+		}
+		else    // boundaries
+		{
+		    this.inst.update_bbox();
+			var bbox = this.inst.bbox;
+		    if (this.isReachedBound(4))
+            {
+		        this.inst.y = this.verticalBoundary[1] + 1 + (bbox.bottom - this.inst.y) ;
+                this.runtime.trigger(cr.behaviors.Rex_boundary.prototype.cnds.OnHitTopBoundary, this.inst);
+            }
+            else if (this.isReachedBound(8))
+            {
+		        this.inst.y = this.verticalBoundary[0] - 1- (this.inst.y - bbox.top);
+                this.runtime.trigger(cr.behaviors.Rex_boundary.prototype.cnds.OnHitBottomBoundary, this.inst);
+            }
+		}
+	    return (currentY != this.inst.y);
+	};
+	behinstProto.modwrapH = function ()
+	{
+	    if (!this.horizontalEnable)
+		    return false;
+		var isReachedLeft = this.isReachedBound(1);
+		var isReachedRight = this.isReachedBound(2);
+		var isReached = (isReachedLeft || isReachedRight);
+		if (isReached)
+		{
+		    var dist = this.horizontalBoundary[1] - this.horizontalBoundary[0];
+		    var offset =  (this.inst.x - this.horizontalBoundary[0]) % dist;
+		    if (offset < 0)
+		        offset += dist;
+	        this.inst.x = offset + this.horizontalBoundary[0];
+		}
+        if (isReachedLeft)
+            this.runtime.trigger(cr.behaviors.Rex_boundary.prototype.cnds.OnHitLeftBoundary, this.inst);
+        else if (isReachedRight)
+            this.runtime.trigger(cr.behaviors.Rex_boundary.prototype.cnds.OnHitRightBoundary, this.inst);
+	    return isReached;
+	};
+	behinstProto.modwrapV = function ()
+	{
+	    if (!this.verticalEnable)
+		    return false;
+		var isReachedTop = this.isReachedBound(4);
+		var isReachedBottom = this.isReachedBound(8);
+		var isReached = (isReachedTop || isReachedBottom);
+		if (isReached)
+		{
+		    var dist = this.verticalBoundary[1] - this.verticalBoundary[0];
+		    var offset =  (this.inst.y - this.verticalBoundary[0]) % dist;
+		    if (offset < 0)
+		        offset += dist;
+	        this.inst.y = offset + this.verticalBoundary[0];
+		}
+		if (isReachedTop)
+            this.runtime.trigger(cr.behaviors.Rex_boundary.prototype.cnds.OnHitTopBoundary, this.inst);
+        else if (isReachedBottom)
+            this.runtime.trigger(cr.behaviors.Rex_boundary.prototype.cnds.OnHitBottomBoundary, this.inst);
+	    return isReached;
+	};
+	behinstProto.isReachedBound = function (boundType)
+	{
+        this.updateH();
+        this.updateV();
+        var isReached = false;
+        if (this.alignMode == 0)
+        {
+		    if ((boundType & 1) === 1)
+		        isReached |= (this.inst.x < this.horizontalBoundary[0]);
+		    if (((boundType>>1) & 1) === 1)
+		        isReached |=  (this.inst.x > this.horizontalBoundary[1]);
+		    if (((boundType>>2) & 1) === 1)
+		        isReached |=  (this.inst.y < this.verticalBoundary[0]);
+		    if (((boundType>>3) & 1) === 1)
+		        isReached |=  (this.inst.y > this.verticalBoundary[1]);
+		}
+		else
+		{
+		    this.inst.update_bbox();
+			var bbox = this.inst.bbox;
+            if (this.mode === 0)
+            {
+		        if ((boundType&1) === 1)
+		            isReached |= (bbox.left < this.horizontalBoundary[0]);
+		        if (((boundType>>1)&1) === 1)
+		            isReached |= (bbox.right > this.horizontalBoundary[1]);
+		        if (((boundType>>2)&1) === 1)
+		            isReached |= (bbox.top < this.verticalBoundary[0]);
+		        if (((boundType>>3)&1) === 1)
+		            isReached |= (bbox.bottom > this.verticalBoundary[1]);
+            }
+			else if ((this.mode === 1) || (this.mode === 2))
+		    {
+		        if ((boundType&1) === 1)
+		            isReached |= (bbox.right < this.horizontalBoundary[0]);
+		        if (((boundType>>1)&1) === 1)
+		            isReached |= (bbox.left > this.horizontalBoundary[1]);
+		        if (((boundType>>2)&1) === 1)
+		            isReached |= (bbox.bottom < this.verticalBoundary[0]);
+		        if (((boundType>>3)&1) === 1)
+		            isReached |= (bbox.top > this.verticalBoundary[1]);
+			}
+		}
+		return isReached;
+	};
+	behinstProto.posX2percentage = function ()
+	{
+	    var instOffset, boundOffset;
+        this.updateH();
+        if (this.alignMode == 0)
+		{
+            instOffset = this.inst.x - this.horizontalBoundary[0];
+            boundOffset = this.horizontalBoundary[1] - this.horizontalBoundary[0];
+	    }
+		else
+		{
+		    this.inst.update_bbox();
+            instOffset = this.inst.bbox.left - this.horizontalBoundary[0];
+            boundOffset = this.horizontalBoundary[1] - this.horizontalBoundary[0] - (this.inst.bbox.right - this.inst.bbox.left);
+		}
+        var pec = cr.clamp((instOffset/boundOffset), 0, 1) ;
+        return pec;
+	};
+	behinstProto.posY2percentage = function ()
+	{
+	    var instOffset, boundOffset;
+        this.updateV();
+        if (this.alignMode == 0)
+		{
+            instOffset = this.inst.y - this.verticalBoundary[0];
+            boundOffset = this.verticalBoundary[1] - this.verticalBoundary[0];
+		}
+		else
+		{
+		    this.inst.update_bbox();
+            instOffset = this.inst.bbox.top - this.verticalBoundary[0];
+            boundOffset = this.verticalBoundary[1] - this.verticalBoundary[0] - (this.inst.bbox.bottom - this.inst.bbox.top);
+        }
+        var pec = cr.clamp((instOffset/boundOffset), 0, 1);
+        return pec;
+	};
+	behinstProto.percentage2posX = function (p)
+	{
+        p = cr.clamp(p, 0, 1);
+        this.updateH();
+        var rb, lb;
+		if (this.alignMode == 0)    // origin
+		{
+            lb = this.horizontalBoundary[0];
+            rb = this.horizontalBoundary[1];
+        }
+		else    // boundaries
+		{
+		    this.inst.update_bbox();
+            lb = this.horizontalBoundary[0] + (this.inst.x - this.inst.bbox.left);
+			rb = this.horizontalBoundary[1] - (this.inst.bbox.right - this.inst.x);
+        }
+        var x = lb + (rb - lb)*p;
+        return x;
+	};
+	behinstProto.percentage2posY = function (p)
+	{
+        p = cr.clamp(p, 0, 1);
+        this.updateV();
+        var bb, tb;
+		if (this.alignMode == 0)    // origin
+		{
+            tb = this.verticalBoundary[0];
+            bb = this.verticalBoundary[1];
+        }
+		else    // boundaries
+		{
+		    this.inst.update_bbox();
+            tb = this.verticalBoundary[0] + (this.inst.y - this.inst.bbox.top);
+			bb = this.verticalBoundary[1] - (this.inst.bbox.bottom - this.inst.y);
+        }
+        var y = tb + (bb - tb)*p;
+        return y;
+	};
+    function clone(obj)
+	{
+        if (null == obj || "object" != typeof obj)
+		    return obj;
+        var result = obj.constructor();
+        for (var attr in obj)
+		{
+            if (obj.hasOwnProperty(attr))
+			    result[attr] = obj[attr];
+        }
+        return result;
+    };
+	behinstProto.saveToJSON = function ()
+	{
+		return { "he": this.horizontalEnable,
+		         "hb": this.horizontalBoundary,
+                 "ve": this.verticalEnable,
+                 "vb": this.verticalBoundary,
+                 "hp": clone(this.horizontalBoundInstInfo),
+                 "vp": clone(this.verticalBoundInstInfo)
+                };
+	};
+	behinstProto.loadFromJSON = function (o)
+	{
+		this.activated = o["he"];
+		this.horizontalBoundary = o["hb"];
+        this.verticalEnable = o["ve"];
+        this.verticalBoundary = o["vb"];
+        this.horizontalBoundInstInfo = o["hp"];
+        this.verticalBoundInstInfo = o["vp"];
+	};
+	function Cnds() {};
+	behaviorProto.cnds = new Cnds();
+	Cnds.prototype.OnHitAnyBoundary = function ()
+	{
+		return true;
+	};
+	Cnds.prototype.OnHitLeftBoundary = function ()
+	{
+		return true;
+	};
+	Cnds.prototype.OnHitRightBoundary = function ()
+	{
+		return true;
+	};
+	Cnds.prototype.OnHitTopBoundary = function ()
+	{
+		return true;
+	};
+	Cnds.prototype.OnHitBottomBoundary = function ()
+	{
+		return true;
+	};
+	var BOUNDTYPE_MAP = [15,1,2,4,8];
+	Cnds.prototype.IsHitBoundary = function (boundType)
+	{
+		return this.isReachedBound( BOUNDTYPE_MAP[boundType] );
+	};
+	function Acts() {};
+	behaviorProto.acts = new Acts();
+	Acts.prototype.EnableHorizontal = function (s)
+	{
+		this.horizontalEnable = (s==1);
+	};
+	Acts.prototype.EnableVertical = function (s)
+	{
+		this.verticalEnable = (s==1);
+	};
+	Acts.prototype.SetHorizontalBoundary = function (l, r)
+	{
+		this.horizontalBoundary[0] = l;
+		this.horizontalBoundary[1] = r;
+		sortBoundary(this.horizontalBoundary);
+        this.horizontalBoundInstInfo["uid"] = (-1);
+	};
+	Acts.prototype.SetVerticalBoundary = function (u, d)
+	{
+		this.verticalBoundary[0] = u;
+		this.verticalBoundary[1] = d;
+		sortBoundary(this.verticalBoundary);
+        this.verticalBoundInstInfo["uid"] = (-1);
+	};
+    var getInstance = function (obj)
+	{
+		return obj.getFirstPicked();
+	};
+	Acts.prototype.SetHorizontalBoundaryToObject = function (obj, leftImgpt, rightImgpt)
+	{
+        var instInfo = this.horizontalBoundInstInfo;
+		instInfo["uid"] = obj.getFirstPicked().uid;
+        instInfo["p0"] = leftImgpt;
+        instInfo["p1"] = rightImgpt;
+	};
+	Acts.prototype.SetVerticalBoundaryToObject = function (obj, topImgpt, bottomImgpt)
+	{
+        var instInfo = this.verticalBoundInstInfo;
+		instInfo["uid"] = obj.getFirstPicked().uid;
+        instInfo["p0"] = topImgpt;
+        instInfo["p1"] = bottomImgpt;
+	};
+	Acts.prototype.SetXByPercentage = function (p)
+	{
+	    if (!this.horizontalEnable)
+		    return;
+        var newX = this.percentage2posX(p);
+        if (newX !== this.inst.x)
+        {
+            this.inst.x = newX;
+            this.inst.set_bbox_changed();
+        }
+	};
+	Acts.prototype.SetYByPercentage = function (p)
+	{
+	    if (!this.verticalEnable)
+		    return;
+        var newY = this.percentage2posY(p);
+        if (newY !== this.inst.y)
+        {
+            this.inst.y = newY;
+            this.inst.set_bbox_changed();
+        }
+	};
+	Acts.prototype.SetYXByPercentage = function (px, py)
+	{
+        var isXChanged = false;
+	    if (this.horizontalEnable)
+        {
+            this.inst.x = this.percentage2posX(px);
+            isXChanged = (newX !== this.inst.x);
+            if (isXChanged)
+                this.inst.x = newX;
+        }
+        var isYChanged = false;
+	    if (this.verticalEnable)
+        {
+		    newY = this.percentage2posY(py);
+            isYChanged = (newY !== this.inst.y);
+            if (isYChanged)
+                this.inst.y = newY;
+        }
+        if (isXChanged || isYChanged)
+        {
+            this.inst.set_bbox_changed();
+        }
+	};
+	function Exps() {};
+	behaviorProto.exps = new Exps();
+	Exps.prototype.HorizontalEnable = function (ret)
+	{
+        ret.set_int( (this.horizontalEnable)? 1:0 );
+	};
+	Exps.prototype.VerticalEnable = function (ret)
+	{
+        ret.set_int( (this.verticalEnable)? 1:0 );
+	};
+	Exps.prototype.LeftBound = function (ret)
+	{
+        this.updateH();
+        ret.set_float( this.horizontalBoundary[0] );
+	};
+	Exps.prototype.RightBound = function (ret)
+	{
+        this.updateH();
+        ret.set_float( this.horizontalBoundary[1] );
+	};
+	Exps.prototype.TopBound = function (ret)
+	{
+        this.updateV();
+        ret.set_float( this.verticalBoundary[0] );
+	};
+	Exps.prototype.BottomBound = function (ret)
+	{
+        this.updateV();
+        ret.set_float( this.verticalBoundary[1] );
+	};
+	Exps.prototype.HorPercent = function (ret)
+	{
+        ret.set_float( this.posX2percentage() );
+	};
+	Exps.prototype.VerPercent = function (ret)
+	{
+        ret.set_float( this.posY2percentage() );
+	};
+	Exps.prototype.HorScale = function (ret, minValue, maxValue)
+	{
+        var pec = this.posX2percentage();
+        if (maxValue < minValue)
+        {
+            var tmp = maxValue; maxValue = minValue; minValue = tmp;
+            pec = 1.0-pec;
+        }
+        var scaled = minValue + pec*(maxValue-minValue);
+        ret.set_float( scaled );
+	};
+	Exps.prototype.VerScale = function (ret, minValue, maxValue)
+	{
+        var pec = this.posY2percentage();
+        if (maxValue < minValue)
+        {
+            var tmp = maxValue; maxValue = minValue; minValue = tmp;
+            pec = 1.0-pec;
+        }
+        var scaled = minValue + pec*(maxValue-minValue);
+        ret.set_float( scaled );
+	};
+	Exps.prototype.HorPercent2PosX = function (ret, p)
+	{
+        ret.set_float( this.percentage2posX(p) );
+	};
+	Exps.prototype.VerPercent2PosY = function (ret, p)
+	{
+        ret.set_float( this.percentage2posY(p) );
+	};
+}());
+;
+;
+cr.behaviors.Sin = function(runtime)
+{
+	this.runtime = runtime;
+};
+(function ()
+{
+	var behaviorProto = cr.behaviors.Sin.prototype;
+	behaviorProto.Type = function(behavior, objtype)
+	{
+		this.behavior = behavior;
+		this.objtype = objtype;
+		this.runtime = behavior.runtime;
+	};
+	var behtypeProto = behaviorProto.Type.prototype;
+	behtypeProto.onCreate = function()
+	{
+	};
+	behaviorProto.Instance = function(type, inst)
+	{
+		this.type = type;
+		this.behavior = type.behavior;
+		this.inst = inst;				// associated object instance to modify
+		this.runtime = type.runtime;
+		this.i = 0;		// period offset (radians)
+	};
+	var behinstProto = behaviorProto.Instance.prototype;
+	var _2pi = 2 * Math.PI;
+	var _pi_2 = Math.PI / 2;
+	var _3pi_2 = (3 * Math.PI) / 2;
+	behinstProto.onCreate = function()
+	{
+		this.active = (this.properties[0] === 1);
+		this.movement = this.properties[1]; // 0=Horizontal|1=Vertical|2=Size|3=Width|4=Height|5=Angle|6=Opacity|7=Value only
+		this.wave = this.properties[2];		// 0=Sine|1=Triangle|2=Sawtooth|3=Reverse sawtooth|4=Square
+		this.period = this.properties[3];
+		this.period += Math.random() * this.properties[4];								// period random
+		if (this.period === 0)
+			this.i = 0;
+		else
+		{
+			this.i = (this.properties[5] / this.period) * _2pi;								// period offset
+			this.i += ((Math.random() * this.properties[6]) / this.period) * _2pi;			// period offset random
+		}
+		this.mag = this.properties[7];													// magnitude
+		this.mag += Math.random() * this.properties[8];									// magnitude random
+		this.initialValue = 0;
+		this.initialValue2 = 0;
+		this.ratio = 0;
+		if (this.movement === 5)			// angle
+			this.mag = cr.to_radians(this.mag);
+		this.init();
+	};
+	behinstProto.saveToJSON = function ()
+	{
+		return {
+			"i": this.i,
+			"a": this.active,
+			"mv": this.movement,
+			"w": this.wave,
+			"p": this.period,
+			"mag": this.mag,
+			"iv": this.initialValue,
+			"iv2": this.initialValue2,
+			"r": this.ratio,
+			"lkv": this.lastKnownValue,
+			"lkv2": this.lastKnownValue2
+		};
+	};
+	behinstProto.loadFromJSON = function (o)
+	{
+		this.i = o["i"];
+		this.active = o["a"];
+		this.movement = o["mv"];
+		this.wave = o["w"];
+		this.period = o["p"];
+		this.mag = o["mag"];
+		this.initialValue = o["iv"];
+		this.initialValue2 = o["iv2"] || 0;
+		this.ratio = o["r"];
+		this.lastKnownValue = o["lkv"];
+		this.lastKnownValue2 = o["lkv2"] || 0;
+	};
+	behinstProto.init = function ()
+	{
+		switch (this.movement) {
+		case 0:		// horizontal
+			this.initialValue = this.inst.x;
+			break;
+		case 1:		// vertical
+			this.initialValue = this.inst.y;
+			break;
+		case 2:		// size
+			this.initialValue = this.inst.width;
+			this.ratio = this.inst.height / this.inst.width;
+			break;
+		case 3:		// width
+			this.initialValue = this.inst.width;
+			break;
+		case 4:		// height
+			this.initialValue = this.inst.height;
+			break;
+		case 5:		// angle
+			this.initialValue = this.inst.angle;
+			break;
+		case 6:		// opacity
+			this.initialValue = this.inst.opacity;
+			break;
+		case 7:
+			this.initialValue = 0;
+			break;
+		case 8:		// forwards/backwards
+			this.initialValue = this.inst.x;
+			this.initialValue2 = this.inst.y;
+			break;
+		default:
+;
+		}
+		this.lastKnownValue = this.initialValue;
+		this.lastKnownValue2 = this.initialValue2;
+	};
+	behinstProto.waveFunc = function (x)
+	{
+		x = x % _2pi;
+		switch (this.wave) {
+		case 0:		// sine
+			return Math.sin(x);
+		case 1:		// triangle
+			if (x <= _pi_2)
+				return x / _pi_2;
+			else if (x <= _3pi_2)
+				return 1 - (2 * (x - _pi_2) / Math.PI);
+			else
+				return (x - _3pi_2) / _pi_2 - 1;
+		case 2:		// sawtooth
+			return 2 * x / _2pi - 1;
+		case 3:		// reverse sawtooth
+			return -2 * x / _2pi + 1;
+		case 4:		// square
+			return x < Math.PI ? -1 : 1;
+		};
+		return 0;
+	};
+	behinstProto.tick = function ()
+	{
+		var dt = this.runtime.getDt(this.inst);
+		if (!this.active || dt === 0)
+			return;
+		if (this.period === 0)
+			this.i = 0;
+		else
+		{
+			this.i += (dt / this.period) * _2pi;
+			this.i = this.i % _2pi;
+		}
+		this.updateFromPhase();
+	};
+	behinstProto.updateFromPhase = function ()
+	{
+		switch (this.movement) {
+		case 0:		// horizontal
+			if (this.inst.x !== this.lastKnownValue)
+				this.initialValue += this.inst.x - this.lastKnownValue;
+			this.inst.x = this.initialValue + this.waveFunc(this.i) * this.mag;
+			this.lastKnownValue = this.inst.x;
+			break;
+		case 1:		// vertical
+			if (this.inst.y !== this.lastKnownValue)
+				this.initialValue += this.inst.y - this.lastKnownValue;
+			this.inst.y = this.initialValue + this.waveFunc(this.i) * this.mag;
+			this.lastKnownValue = this.inst.y;
+			break;
+		case 2:		// size
+			this.inst.width = this.initialValue + this.waveFunc(this.i) * this.mag;
+			this.inst.height = this.inst.width * this.ratio;
+			break;
+		case 3:		// width
+			this.inst.width = this.initialValue + this.waveFunc(this.i) * this.mag;
+			break;
+		case 4:		// height
+			this.inst.height = this.initialValue + this.waveFunc(this.i) * this.mag;
+			break;
+		case 5:		// angle
+			if (this.inst.angle !== this.lastKnownValue)
+				this.initialValue = cr.clamp_angle(this.initialValue + (this.inst.angle - this.lastKnownValue));
+			this.inst.angle = cr.clamp_angle(this.initialValue + this.waveFunc(this.i) * this.mag);
+			this.lastKnownValue = this.inst.angle;
+			break;
+		case 6:		// opacity
+			this.inst.opacity = this.initialValue + (this.waveFunc(this.i) * this.mag) / 100;
+			if (this.inst.opacity < 0)
+				this.inst.opacity = 0;
+			else if (this.inst.opacity > 1)
+				this.inst.opacity = 1;
+			break;
+		case 8:		// forwards/backwards
+			if (this.inst.x !== this.lastKnownValue)
+				this.initialValue += this.inst.x - this.lastKnownValue;
+			if (this.inst.y !== this.lastKnownValue2)
+				this.initialValue2 += this.inst.y - this.lastKnownValue2;
+			this.inst.x = this.initialValue + Math.cos(this.inst.angle) * this.waveFunc(this.i) * this.mag;
+			this.inst.y = this.initialValue2 + Math.sin(this.inst.angle) * this.waveFunc(this.i) * this.mag;
+			this.lastKnownValue = this.inst.x;
+			this.lastKnownValue2 = this.inst.y;
+			break;
+		}
+		this.inst.set_bbox_changed();
+	};
+	behinstProto.onSpriteFrameChanged = function (prev_frame, next_frame)
+	{
+		switch (this.movement) {
+		case 2:	// size
+			this.initialValue *= (next_frame.width / prev_frame.width);
+			this.ratio = next_frame.height / next_frame.width;
+			break;
+		case 3:	// width
+			this.initialValue *= (next_frame.width / prev_frame.width);
+			break;
+		case 4:	// height
+			this.initialValue *= (next_frame.height / prev_frame.height);
+			break;
+		}
+	};
+	function Cnds() {};
+	Cnds.prototype.IsActive = function ()
+	{
+		return this.active;
+	};
+	Cnds.prototype.CompareMovement = function (m)
+	{
+		return this.movement === m;
+	};
+	Cnds.prototype.ComparePeriod = function (cmp, v)
+	{
+		return cr.do_cmp(this.period, cmp, v);
+	};
+	Cnds.prototype.CompareMagnitude = function (cmp, v)
+	{
+		if (this.movement === 5)
+			return cr.do_cmp(this.mag, cmp, cr.to_radians(v));
+		else
+			return cr.do_cmp(this.mag, cmp, v);
+	};
+	Cnds.prototype.CompareWave = function (w)
+	{
+		return this.wave === w;
+	};
+	behaviorProto.cnds = new Cnds();
+	function Acts() {};
+	Acts.prototype.SetActive = function (a)
+	{
+		this.active = (a === 1);
+	};
+	Acts.prototype.SetPeriod = function (x)
+	{
+		this.period = x;
+	};
+	Acts.prototype.SetMagnitude = function (x)
+	{
+		this.mag = x;
+		if (this.movement === 5)	// angle
+			this.mag = cr.to_radians(this.mag);
+	};
+	Acts.prototype.SetMovement = function (m)
+	{
+		if (this.movement === 5 && m !== 5)
+			this.mag = cr.to_degrees(this.mag);
+		this.movement = m;
+		this.init();
+	};
+	Acts.prototype.SetWave = function (w)
+	{
+		this.wave = w;
+	};
+	Acts.prototype.SetPhase = function (x)
+	{
+		this.i = (x * _2pi) % _2pi;
+		this.updateFromPhase();
+	};
+	Acts.prototype.UpdateInitialState = function ()
+	{
+		this.init();
+	};
+	behaviorProto.acts = new Acts();
+	function Exps() {};
+	Exps.prototype.CyclePosition = function (ret)
+	{
+		ret.set_float(this.i / _2pi);
+	};
+	Exps.prototype.Period = function (ret)
+	{
+		ret.set_float(this.period);
+	};
+	Exps.prototype.Magnitude = function (ret)
+	{
+		if (this.movement === 5)	// angle
+			ret.set_float(cr.to_degrees(this.mag));
+		else
+			ret.set_float(this.mag);
+	};
+	Exps.prototype.Value = function (ret)
+	{
+		ret.set_float(this.waveFunc(this.i) * this.mag);
+	};
+	behaviorProto.exps = new Exps();
 }());
 ;
 ;
@@ -25526,6 +30302,1420 @@ cr.behaviors.rex_Anchor_mod = function(runtime)
 }());
 ;
 ;
+function trim (str) {
+    return str.replace(/^\s\s*/, '').replace(/\s\s*$/, '');
+}
+cr.behaviors.rex_lunarray_Tween_mod = function(runtime)
+{
+	this.runtime = runtime;
+};
+(function ()
+{
+	var behaviorProto = cr.behaviors.rex_lunarray_Tween_mod.prototype;
+	behaviorProto.Type = function(behavior, objtype)
+	{
+		this.behavior = behavior;
+		this.objtype = objtype;
+		this.runtime = behavior.runtime;
+	};
+	var behtypeProto = behaviorProto.Type.prototype;
+	behtypeProto.onCreate = function()
+	{
+	};
+	behaviorProto.Instance = function(type, inst)
+	{
+		this.type = type;
+		this.behavior = type.behavior;
+		this.inst = inst;				// associated object instance to modify
+		this.runtime = type.runtime;
+		this.i = 0;		// progress
+	};
+	var behinstProto = behaviorProto.Instance.prototype;
+	behinstProto.groupUpdateProgress = function(v)
+	{
+		if (v > 1) v = 1;
+		if (cr.lunarray_tweenProgress[this.group] = -1) cr.lunarray_tweenProgress[this.group] = v;
+		if (cr.lunarray_tweenProgress[this.group] >= v) cr.lunarray_tweenProgress[this.group] = v;
+	}
+	behinstProto.groupSync = function()
+	{
+		if (this.group != "") {
+			if (typeof cr.lunarray_tweenGroup === "undefined") {
+				cr.lunarray_tweenGroup = {};
+				cr.lunarray_tweenProgress = {};
+			}
+			if (typeof cr.lunarray_tweenGroup[this.group] === "undefined") {
+				cr.lunarray_tweenGroup[this.group] = [];
+				cr.lunarray_tweenProgress[this.group] = -1;
+			}
+			if (cr.lunarray_tweenGroup[this.group].indexOf(this) == -1) {
+				cr.lunarray_tweenGroup[this.group].push(this);
+			}
+		}
+	}
+	behinstProto.saveState = function()
+	{
+		this.tweenSaveWidth = this.inst.width;
+		this.tweenSaveHeight = this.inst.height;
+		this.tweenSaveAngle = this.inst.angle;
+		this.tweenSaveOpacity = this.inst.opacity;
+		this.tweenSaveX = this.inst.x;
+		this.tweenSaveY = this.inst.y;
+		this.tweenSaveValue = this.value;
+	}
+	behinstProto.onCreate = function()
+	{
+		this.active = (this.properties[0] === 1);
+		this.tweened = this.properties[1]; // 0=Position|1=Size|2=Width|3=Height|4=Angle|5=Opacity|6=Value only|7=Pixel Size
+		this.easing = this.properties[2];
+		this.initial = this.properties[3];
+		this.target = this.properties[4];
+		this.duration = this.properties[5];
+		this.wait = this.properties[6];
+		this.playmode = this.properties[7]; //0=Play Once|1=Repeat|2=Ping Pong|3=Play once and destroy|4=Loop|5=Ping Pong Stop|6=Play and stop
+		this.value = this.properties[8];
+		this.coord_mode = this.properties[9]; //0=Absolute|1=Relative
+		this.forceInit = (this.properties[10] === 1);
+		this.group = this.properties[11];
+		this.setRepeatCount(this.properties[12]);
+		this.targetObject = null;
+		this.pingpongCounter = 0;
+		if (this.playmode == 5) this.pingpongCounter = 1;
+		this.groupSync();
+		this.isPaused = false;
+		this.initialX = this.inst.x;
+		this.initialY = this.inst.y;
+		this.targetX = parseFloat(this.target.split(",")[0]);
+		this.targetY = parseFloat(this.target.split(",")[1]);
+		this.saveState();
+		this.tweenInitialX = 0;
+		this.tweenInitialY = 0;
+		this.tweenTargetX = 0;
+		this.tweenTargetY = 0;
+		this.tweenTargetAngle = 0;
+		this.ratio = this.inst.height / this.inst.width;
+		this.reverse = false;
+		this.rewindMode = false;
+		this.doTweenX = true;
+		this.doTweenY = true;
+		this.loop = false;
+		this.initiating = 0;
+		this.cooldown = 0;
+		this.lastPlayMode = this.playmode;
+		this.lastKnownValue = this.tweenInitialX;
+		this.lastKnownX = this.tweenInitialX;
+		this.lastKnownY = this.tweenInitialY;
+		if (this.forceInit) this.init();
+		if (this.initial == "") this.initial = "current";
+		this.onStarted = false;
+		this.onStartedDone = false;
+		this.onWaitEnd = false;
+		this.onWaitEndDone = false;
+		this.onEnd = false;
+		this.onEndDone = false;
+		this.onCooldown = false;
+		this.onCooldownDone = false;
+		this.onCountEnd = false;
+		if (this.active) {
+			this.init();
+		}
+	};
+	behinstProto.init = function ()
+	{
+		this.onStarted = false;
+		if (this.initial === "") this.initial = "current";
+		if (this.target === "") this.target = "current";
+		var isCurrent = (this.initial === "current");
+		var targetIsCurrent = (this.target === "current");
+		var isTargettingObject = (this.target === "OBJ");
+		if (this.target === "OBJ") {
+			if (this.targetObject != null) {
+				if (this.tweened == 0) {
+					if (this.coord_mode == 1) //relative mode
+						this.target = (this.targetObject.x-this.inst.x) + "," + (this.targetObject.y-this.inst.y);
+					else //absolute mode
+						this.target = (this.targetObject.x) + "," + (this.targetObject.y);
+				} else if ((this.tweened == 1) || (this.tweened == 2) || (this.tweened == 3) || (this.tweened == 7)) {
+					if (this.coord_mode == 1) { //relative mode
+						this.target = ((this.tweened==2)?1:(this.targetObject.width)) + "," + ((this.tweened==3)?1:(this.targetObject.height));
+					} else {
+						this.target = ((this.tweened==2)?1:(this.targetObject.width/this.tweenSaveWidth)) + "," + ((this.tweened==3)?1:(this.targetObject.height/this.tweenSaveHeight));
+					}
+				} else if (this.tweened == 4) {
+					if (this.coord_mode == 1) //relative mode
+						this.target = cr.to_degrees(this.targetObject.angle-this.inst.angle) + "";
+					else //absolute mode
+						this.target = cr.to_degrees(this.targetObject.angle) + "";
+				} else if (this.tweened == 5) {
+					if (this.coord_mode == 1) //relative mode
+						this.target = ((this.targetObject.opacity-this.inst.opacity)*100) + "";
+					else //absolute mode
+						this.target = (this.targetObject.opacity*100) + "";
+				}
+			}
+		}
+		if (this.tweened == 0) {
+			if (targetIsCurrent) this.target = this.inst.x + "," + this.inst.y;
+			if (!isCurrent) {
+				if (!this.reverse) {
+					if (this.playmode != 1) {
+						this.inst.x = parseFloat(this.initial.split(",")[0]);
+						this.inst.y = parseFloat(this.initial.split(",")[1]);
+					}
+				}
+			} else {
+				if (this.coord_mode == 1) {
+					this.initial = this.inst.x + "," + this.inst.y;
+				} else {
+					this.initial = this.tweenSaveX + "," + this.tweenSaveY;
+				}
+			}
+			if (this.coord_mode == 1) {
+				if (this.loop) {
+					this.inst.x = this.tweenSaveX;
+					this.inst.y = this.tweenSaveY;
+				}
+				this.initialX = this.inst.x;
+				this.initialY = this.inst.y;
+				if (!this.reverse) {
+					this.targetX = parseFloat(this.target.split(",")[0]);
+					this.targetY = parseFloat(this.target.split(",")[1]);
+				} else {
+					this.targetX = -parseFloat(this.target.split(",")[0]);
+					this.targetY = -parseFloat(this.target.split(",")[1]);
+				}
+				this.tweenInitialX = this.initialX;
+				this.tweenInitialY = this.initialY;
+				this.tweenTargetX = this.tweenInitialX + this.targetX;
+				this.tweenTargetY = this.tweenInitialY + this.targetY;
+			} else {
+				if (!this.reverse) {
+					this.inst.x = this.tweenSaveX;
+					this.inst.y = this.tweenSaveY;
+					this.targetX = parseFloat(this.target.split(",")[0]);
+					this.targetY = parseFloat(this.target.split(",")[1]);
+				} else {
+					this.inst.x = parseFloat(this.target.split(",")[0]);
+					this.inst.y = parseFloat(this.target.split(",")[1]);
+					this.targetX = this.tweenSaveX;
+					this.targetY = this.tweenSaveY;
+				}
+				this.initialX = this.inst.x;
+				this.initialY = this.inst.y;
+				this.tweenInitialX = this.initialX;
+				this.tweenInitialY = this.initialY;
+				this.tweenTargetX = this.targetX;
+				this.tweenTargetY = this.targetY;
+				if (this.playmode == -6) {
+					this.tweenTargetX = this.tweenSaveX;
+					this.tweenTargetY = this.tweenSaveY;
+				}
+			}
+		} else if ((this.tweened == 1) || (this.tweened == 2) || (this.tweened == 3)) {
+			if (targetIsCurrent) this.target = "1,1";
+			if (this.initial == "current") this.initial = "1,1";
+			this.initial = "" + this.initial;
+			this.target = "" + this.target;
+			if (this.tweened == 2) {
+				if (this.initial.indexOf(',') == -1) this.initial = parseFloat(this.initial) + ",1";
+				if (this.target.indexOf(',') == -1) this.target = parseFloat(this.target) + ",1";
+			} else if (this.tweened == 3) {
+				if (this.initial.indexOf(',') == -1) this.initial = "1," + parseFloat(this.initial);
+				if (this.target.indexOf(',') == -1) this.target = "1," + parseFloat(this.target);
+			} else {
+				if (this.initial.indexOf(',') == -1) this.initial = parseFloat(this.initial) + "," + parseFloat(this.initial);
+				if (this.target.indexOf(',') == -1) this.target = parseFloat(this.target) + "," + parseFloat(this.target);
+			}
+			var ix = parseFloat(this.initial.split(",")[0]);
+			var iy = parseFloat(this.initial.split(",")[1]);
+			this.doTweenX = true;
+			var tx = parseFloat(this.target.split(",")[0]);
+			if ((tx == 0) || (isNaN(tx)))	this.doTweenX = false;
+			if (this.tweened == 3) this.doTweenX = false;
+			this.doTweenY = true;
+			var ty = parseFloat(this.target.split(",")[1]);
+			if ((ty == 0) || (isNaN(ty)))	this.doTweenY = false;
+			if (this.tweened == 2) this.doTweenY = false;
+			if (this.coord_mode == 1) {
+				if (this.loop) {
+					this.inst.width = this.tweenSaveWidth;
+					this.inst.height = this.tweenSaveHeight;
+				}
+				if (!isCurrent) {
+					if (!this.reverse) {
+						this.inst.width = this.inst.width * ix;
+						this.inst.height = this.inst.height * iy;
+					} else {
+						this.inst.width = this.inst.width * tx;
+						this.inst.height = this.inst.height * ty;
+					}
+				}
+				this.initialX = this.inst.width;
+				this.initialY = this.inst.height;
+				this.tweenInitialX = this.initialX;
+				this.tweenInitialY = this.initialY;
+				if (!this.reverse) {
+					this.targetX = this.initialX * tx;
+					this.targetY = this.initialY * ty;
+				} else {
+					this.targetX = this.initialX * ix/tx;
+					this.targetY = this.initialY * iy/ty;
+				}
+				this.tweenTargetX = this.targetX;
+				this.tweenTargetY = this.targetY;
+			} else {
+				if (!isCurrent) {
+					if (!this.reverse) {
+						this.inst.width = this.tweenSaveWidth * ix;
+						this.inst.height = this.tweenSaveHeight * iy;
+					} else {
+						this.inst.width = this.tweenSaveWidth * tx;
+						this.inst.height = this.tweenSaveHeight * ty;
+					}
+				}
+				this.initialX = this.inst.width;
+				this.initialY = this.inst.height;
+				this.tweenInitialX = this.initialX;
+				this.tweenInitialY = this.initialY;
+				if (!this.reverse) {
+					this.targetX = this.tweenSaveWidth * tx;
+					this.targetY = this.tweenSaveHeight * ty;
+				} else {
+					this.targetX = this.tweenSaveWidth * ix;
+					this.targetY = this.tweenSaveHeight * iy;
+				}
+				this.tweenTargetX = this.targetX;
+				this.tweenTargetY = this.targetY;
+			}
+			if (this.playmode == -6) {
+				this.tweenTargetX = this.tweenSaveWidth * ix;
+				this.tweenTargetY = this.tweenSaveHeight * iy;
+			}
+		} else if (this.tweened == 4) {
+			if (targetIsCurrent) this.target = cr.to_degrees(this.inst.angle);
+			if (this.initial != "current") {
+				if (!this.reverse) {
+					if (this.playmode != 1) { //if repeat, don't initialize
+						this.inst.angle = cr.to_radians(parseFloat(this.initial.split(",")[0]));
+					}
+				}
+			}
+			if (this.coord_mode == 1) {
+				if (this.loop) {
+					this.inst.angle = this.tweenSaveAngle;
+				}
+				this.initialX = this.inst.angle;
+				if (this.reverse) {
+					this.targetX = this.inst.angle - cr.to_radians(parseFloat(this.target.split(",")[0]));
+				} else {
+					this.targetX = this.inst.angle + cr.to_radians(parseFloat(this.target.split(",")[0]));
+				}
+				this.tweenInitialX = this.initialX;
+				this.tweenTargetX = cr.to_degrees(this.targetX);
+			} else {
+				if (this.reverse) {
+					this.inst.angle = cr.to_radians(parseFloat(this.target.split(",")[0]));;
+					this.initialX = this.inst.angle;
+					this.targetX = this.tweenSaveAngle;
+					this.tweenInitialX = this.initialX;
+					this.tweenTargetX = cr.to_degrees(this.targetX);
+				} else {
+					this.inst.angle = this.tweenSaveAngle;
+					this.initialX = this.inst.angle;
+					this.targetX = cr.to_radians(parseFloat(this.target.split(",")[0]));
+					this.tweenInitialX = this.initialX;
+					this.tweenTargetX = cr.to_degrees(this.targetX);
+				}
+			}
+			if (this.playmode == -6) {
+				this.tweenTargetX = cr.to_degrees(this.tweenSaveAngle);
+			}
+			this.tweenTargetAngle = cr.to_radians(this.tweenTargetX);
+		} else if (this.tweened == 5) {
+			if (this.initial == "current") this.initial = this.inst.opacity;
+			if (targetIsCurrent) this.target = ""+this.inst.opacity;
+			if (!isCurrent) {
+				if (!this.reverse) {
+					if (this.playmode != 1) { //if repeat, don't initialize
+						this.inst.opacity = parseFloat(this.initial.split(",")[0]) / 100;
+					}
+				}
+			}
+			if (this.coord_mode == 1) {
+				if (this.loop) {
+					this.inst.opacity = this.tweenSaveOpacity;
+				}
+				this.initialX = this.inst.opacity;
+				this.tweenInitialX = this.initialX;
+				if (!this.reverse) {
+					this.targetX = parseFloat(this.target.split(",")[0]) / 100;
+				} else {
+					this.targetX = -parseFloat(this.target.split(",")[0]) / 100;
+				}
+				this.tweenTargetX = this.tweenInitialX + this.targetX;
+			} else {
+				this.initialX = this.inst.opacity;
+				if (!this.reverse) {
+					this.tweenInitialX = this.initialX;
+					this.targetX = parseFloat(this.target.split(",")[0]) / 100;
+				} else {
+					this.tweenInitialX = parseFloat(this.target.split(",")[0]) / 100;
+					this.targetX = parseFloat(this.initial.split(",")[0]) / 100;
+				}
+				this.tweenTargetX = this.targetX;
+			}
+			if (this.playmode == -6) {
+				this.tweenTargetX = this.tweenSaveOpacity;
+			}
+		} else if (this.tweened == 6) {
+			if (isNaN(this.value)) this.value = 0;
+			if (this.initial == "current") this.initial = ""+this.value;
+			if (targetIsCurrent) this.target = ""+this.value;
+			if (!isCurrent) {
+				if (!this.reverse) {
+					if (this.playmode != 1) { //if repeat, don't initialize
+						this.value = parseFloat(this.initial.split(",")[0]);
+					}
+				}
+			}
+			if (this.coord_mode == 1) {
+				if (this.loop) {
+					this.value = this.tweenSaveValue;
+				}
+				if (!isCurrent) {
+					if (!this.reverse) {
+						this.value = parseFloat(this.initial.split(",")[0]);
+					} else {
+						this.value = parseFloat(this.target.split(",")[0]);
+					}
+				}
+				this.initialX = this.value;
+				if (!this.reverse) {
+					this.targetX = this.initialX + parseFloat(this.target.split(",")[0]);
+				} else {
+					this.targetX = this.initialX - parseFloat(this.target.split(",")[0]);
+				}
+				this.tweenInitialX = this.initialX;
+				this.tweenTargetX = this.targetX;
+			} else {
+				if (!isCurrent) {
+					if (!this.reverse) {
+						this.value = parseFloat(this.initial.split(",")[0]);
+					} else {
+						this.value = parseFloat(this.target.split(",")[0]);
+					}
+				}
+				this.initialX = this.value;
+				if (!this.reverse) {
+					this.targetX = parseFloat(this.target.split(",")[0]);
+				} else {
+					this.targetX = parseFloat(this.initial.split(",")[0]);
+				}
+				this.tweenInitialX = this.initialX;
+				this.tweenTargetX = this.targetX;
+			}
+			if (this.playmode == -6) {
+				this.tweenTargetX = this.tweenSaveValue;
+			}
+		} else if (this.tweened == 7) {
+			if (targetIsCurrent) this.target = this.inst.width + "," + this.inst.height;
+			if (this.initial != "current") {
+				if (!this.reverse) {
+					if (this.playmode != 1) { //if repeat, don't initialize
+						this.inst.width = parseFloat(this.initial.split(",")[0]);
+						this.inst.height = parseFloat(this.initial.split(",")[1]);
+					}
+				}
+			}
+			this.doTweenX = true;
+			var tx = parseFloat(this.target.split(",")[0]);
+			if ((tx < 0) || (isNaN(tx)))	this.doTweenX = false;
+			this.doTweenY = true;
+			var ty = parseFloat(this.target.split(",")[1]);
+			if ((ty < 0) || (isNaN(ty)))	this.doTweenY = false;
+			if (this.coord_mode == 1) {
+				if (this.loop) {
+					this.inst.width = this.tweenSaveWidth;
+					this.inst.height = this.tweenSaveHeight;
+				}
+				this.initialX = this.inst.width;
+				this.initialY = this.inst.height;
+				if (!this.reverse) {
+					this.targetX = this.initialX + parseFloat(this.target.split(",")[0]);
+					this.targetY = this.initialY + parseFloat(this.target.split(",")[1]);
+				} else {
+					this.targetX = this.initialX - parseFloat(this.target.split(",")[0]);
+					this.targetY = this.initialY - parseFloat(this.target.split(",")[1]);
+				}
+				this.tweenInitialX = this.initialX;
+				this.tweenInitialY = this.initialY;
+				this.tweenTargetX = this.targetX;
+				this.tweenTargetY = this.targetY;
+			} else {
+				if (!isCurrent) {
+					if (!this.reverse) {
+						this.inst.width = this.tweenSaveWidth;
+						this.inst.height = this.tweenSaveHeight;
+					} else {
+						this.inst.width = parseFloat(this.target.split(",")[0]);
+						this.inst.height = parseFloat(this.target.split(",")[1]);
+					}
+				}
+				this.initialX = this.inst.width;
+				this.initialY = this.inst.height;
+				if (!this.reverse) {
+					this.targetX = parseFloat(this.target.split(",")[0]);
+					this.targetY = parseFloat(this.target.split(",")[1]);
+				} else {
+					this.targetX = this.tweenSaveWidth;
+					this.targetY = this.tweenSaveHeight;
+				}
+				this.tweenInitialX = this.initialX;
+				this.tweenInitialY = this.initialY;
+				this.tweenTargetX = this.targetX;
+				this.tweenTargetY = this.targetY;
+			}
+			if (this.playmode == -6) {
+				this.tweenTargetX = this.tweenSaveWidth;
+				this.tweenTargetY = this.tweenSaveHeight;
+			}
+		} else {
+;
+		}
+		this.lastKnownValue = this.tweenInitialX;
+		this.lastKnownX = this.tweenInitialX;
+		this.lastKnownY = this.tweenInitialY;
+		this.initiating = parseFloat(this.wait.split(",")[0]);
+		this.cooldown = parseFloat(this.wait.split(",")[1]);
+		if ((this.initiating < 0) || (isNaN(this.initiating)))	this.initiating = 0;
+		if ((this.cooldown < 0) || (isNaN(this.cooldown)))	this.cooldown = 0;
+		if (isCurrent) this.initial = "current";
+		if (targetIsCurrent) this.target = "current";
+		if (isTargettingObject) this.target = "OBJ";
+	};
+	function easeOutBounce(t,b,c,d) {
+		if ((t/=d) < (1/2.75)) {
+			return c*(7.5625*t*t) + b;
+		} else if (t < (2/2.75)) {
+			return c*(7.5625*(t-=(1.5/2.75))*t + .75) + b;
+		} else if (t < (2.5/2.75)) {
+			return c*(7.5625*(t-=(2.25/2.75))*t + .9375) + b;
+		} else {
+			return c*(7.5625*(t-=(2.625/2.75))*t + .984375) + b;
+		}
+	}
+	behinstProto.easeFunc = function (t, b, c, d)
+	{
+		switch (this.easing) {
+		case 0:		// linear
+			return c*t/d + b;
+		case 1:		// easeInQuad
+			return c*(t/=d)*t + b;
+		case 2:		// easeOutQuad
+			return -c *(t/=d)*(t-2) + b;
+		case 3:		// easeInOutQuad
+			if ((t/=d/2) < 1) return c/2*t*t + b;
+			return -c/2 * ((--t)*(t-2) - 1) + b;
+		case 4:		// easeInCubic
+			return c*(t/=d)*t*t + b;
+		case 5:		// easeOutCubic
+			return c*((t=t/d-1)*t*t + 1) + b;
+		case 6:		// easeInOutCubic
+			if ((t/=d/2) < 1)
+				return c/2*t*t*t + b;
+			return c/2*((t-=2)*t*t + 2) + b;
+		case 7:		// easeInQuart
+			return c*(t/=d)*t*t*t + b;
+		case 8:		// easeOutQuart
+			return -c * ((t=t/d-1)*t*t*t - 1) + b;
+		case 9:		// easeInOutQuart
+			if ((t/=d/2) < 1) return c/2*t*t*t*t + b;
+			return -c/2 * ((t-=2)*t*t*t - 2) + b;
+		case 10:		// easeInQuint
+			return c*(t/=d)*t*t*t*t + b;
+		case 11:		// easeOutQuint
+			return c*((t=t/d-1)*t*t*t*t + 1) + b;
+		case 12:		// easeInOutQuint
+			if ((t/=d/2) < 1) return c/2*t*t*t*t*t + b;
+			return c/2*((t-=2)*t*t*t*t + 2) + b;
+		case 13:		// easeInCircle
+			return -c * (Math.sqrt(1 - (t/=d)*t) - 1) + b;
+		case 14:		// easeOutCircle
+			return c * Math.sqrt(1 - (t=t/d-1)*t) + b;
+		case 15:		// easeInOutCircle
+			if ((t/=d/2) < 1) return -c/2 * (Math.sqrt(1 - t*t) - 1) + b;
+			return c/2 * (Math.sqrt(1 - (t-=2)*t) + 1) + b;
+		case 16:		// easeInBack
+			var s = 0;
+			if (s==0) s = 1.70158;
+			return c*(t/=d)*t*((s+1)*t - s) + b;
+		case 17:		// easeOutBack
+			var s = 0;
+			if (s==0) s = 1.70158;
+			return c*((t=t/d-1)*t*((s+1)*t + s) + 1) + b;
+		case 18:		// easeInOutBack
+			var s = 0;
+			if (s==0) s = 1.70158;
+			if ((t/=d/2) < 1) return c/2*(t*t*(((s*=(1.525))+1)*t - s)) + b;
+			return c/2*((t-=2)*t*(((s*=(1.525))+1)*t + s) + 2) + b;
+		case 19:	//easeInElastic
+			var a = 0;
+			var p = 0;
+			if (t==0) return b;  if ((t/=d)==1) return b+c; if (p==0) p=d*.3;
+			if (a==0 || a < Math.abs(c)) { a=c; var s=p/4; }
+			else var s = p/(2*Math.PI) * Math.asin (c/a);
+			return -(a*Math.pow(2,10*(t-=1)) * Math.sin( (t*d-s)*(2*Math.PI)/p )) + b;
+		case 20:	//easeOutElastic
+			var a = 0;
+			var p = 0;
+			if (t==0) return b;  if ((t/=d)==1) return b+c;  if (p == 0) p=d*.3;
+			if (a==0 || a < Math.abs(c)) { a=c; var s=p/4; }
+			else var s = p/(2*Math.PI) * Math.asin (c/a);
+			return (a*Math.pow(2,-10*t) * Math.sin( (t*d-s)*(2*Math.PI)/p ) + c + b);
+		case 21:	//easeInOutElastic
+			var a = 0;
+			var p = 0;
+			if (t==0) return b;
+			if ((t/=d/2)==2) return b+c;
+			if (p==0) p=d*(.3*1.5);
+			if (a==0 || a < Math.abs(c)) { a=c; var s=p/4; }
+			else var s = p/(2*Math.PI) * Math.asin (c/a);
+			if (t < 1) return -.5*(a*Math.pow(2,10*(t-=1)) * Math.sin( (t*d-s)*(2*Math.PI)/p )) + b;
+			return a*Math.pow(2,-10*(t-=1)) * Math.sin( (t*d-s)*(2*Math.PI)/p )*.5 + c + b;
+		case 22:	//easeInBounce
+			return c - easeOutBounce(d-t, 0, c, d) + b;
+		case 23:	//easeOutBounce
+			return easeOutBounce(t,b,c,d);
+		case 24:	//easeInOutBounce
+			if (t < d/2) return (c - easeOutBounce(d-(t*2), 0, c, d) + b) * 0.5 +b;
+			else return easeOutBounce(t*2-d, 0, c, d) * .5 + c*.5 + b;
+		case 25:	//easeInSmoothstep
+			var mt = (t/d) / 2;
+			return (2*(mt * mt * (3 - 2*mt)));
+		case 26:	//easeOutSmoothstep
+			var mt = ((t/d) + 1) / 2;
+			return ((2*(mt * mt * (3 - 2*mt))) - 1);
+		case 27:	//easeInOutSmoothstep
+			var mt = (t / d);
+			return (mt * mt * (3 - 2*mt));
+		};
+		return 0;
+	};
+	behinstProto.saveToJSON = function ()
+	{
+		return {
+		    "i": this.i,
+			"active": this.active,
+			"tweened": this.tweened,
+			"easing": this.easing,
+			"initial": this.initial,
+			"target": this.target,
+			"duration": this.duration,
+			"wait": this.wait,
+			"playmode": this.playmode,
+			"value": this.value,
+			"coord_mode": this.coord_mode,
+			"forceInit": this.forceInit,
+			"group": this.group,
+			"repeatcount":this.repeatcount,
+			"targetObject": this.targetObject,
+			"pingpongCounter": this.pingpongCounter,
+			"isPaused": this.isPaused,
+			"initialX": this.initialX,
+			"initialY": this.initialY,
+			"targetX": this.targetX,
+			"targetY": this.targetY,
+			"tweenSaveWidth": this.tweenSaveWidth,
+			"tweenSaveHeight": this.tweenSaveHeight,
+			"tweenSaveAngle": this.tweenSaveAngle,
+			"tweenSaveX": this.tweenSaveX,
+			"tweenSaveY": this.tweenSaveY,
+			"tweenSaveValue": this.tweenSaveValue,
+			"tweenInitialX": this.tweenInitialX,
+			"tweenInitialY": this.tweenInitialY,
+			"tweenTargetX": this.tweenTargetX,
+			"tweenTargetY": this.tweenTargetY,
+			"tweenTargetAngle": this.tweenTargetAngle,
+			"ratio": this.ratio,
+			"reverse": this.reverse,
+			"rewindMode": this.rewindMode,
+			"doTweenX": this.doTweenX,
+			"doTweenY": this.doTweenY,
+			"loop": this.loop,
+			"initiating": this.initiating,
+			"cooldown": this.cooldown,
+			"lastPlayMode": this.lastPlayMode,
+			"lastKnownValue": this.lastKnownValue,
+			"lastKnownX": this.lastKnownX,
+			"lastKnownY": this.lastKnownY,
+			"onStarted": this.onStarted,
+			"onStartedDone": this.onStartedDone,
+			"onWaitEnd": this.onWaitEnd,
+			"onWaitEndDone": this.onWaitEndDone,
+			"onEnd": this.onEnd,
+			"onEndDone": this.onEndDone,
+			"onCooldown": this.onCooldown,
+			"onCooldownDone": this.onCooldownDone,
+			"onCountEnd":this.onCountEnd,
+		};
+	};
+	behinstProto.loadFromJSON = function (o)
+	{
+			this.i = o["i"];
+			this.active = o["active"];
+			this.tweened = o["tweened"];
+			this.easing = o["easing"];
+			this.initial = o["initial"];
+			this.target = o["target"];
+			this.duration = o["duration"];
+			this.wait = o["wait"];
+			this.playmode = o["playmode"];
+			this.value = o["value"];
+			this.coord_mode = o["coord_mode"];
+			this.forceInit = o["forceInit"];
+			this.group = o["group"];
+			this.repeatcount = o["repeatcount"];
+			this.targetObject = o["targetObject"];
+			this.pingpongCounter = o["pingpongCounter"];
+			this.isPaused = o["isPaused"];
+			this.initialX = o["initialX"];
+			this.initialY = o["initialY"];
+			this.targetX = o["targetX"];
+			this.targetY = o["targetY"];
+			this.tweenSaveWidth = o["tweenSaveWidth"];
+			this.tweenSaveHeight = o["tweenSaveHeight"];
+			this.tweenSaveAngle = o["tweenSaveAngle"];
+			this.tweenSaveX = o["tweenSaveX"];
+			this.tweenSaveY = o["tweenSaveY"];
+			this.tweenSaveValue = o["tweenSaveValue"];
+			this.tweenInitialX = o["tweenInitialX"];
+			this.tweenInitialY = o["tweenInitialY"];
+			this.tweenTargetX = o["tweenTargetX"];
+			this.tweenTargetY = o["tweenTargetY"];
+			this.tweenTargetAngle = o["tweenTargetAngle"];
+			this.ratio = o["ratio"];
+			this.reverse = o["reverse"];
+			this.rewindMode = o["rewindMode"];
+			this.doTweenX = o["doTweenX"];
+			this.doTweenY = o["doTweenY"];
+			this.loop = o["loop"];
+			this.initiating = o["initiating"];
+			this.cooldown = o["cooldown"];
+			this.lastPlayMode = o["lastPlayMode"];
+			this.lastKnownValue = o["lastKnownValue"];
+			this.lastKnownX = o["lastKnownX"];
+			this.lastKnownY = o["lastKnownY"];
+			this.onStarted = o["onStarted"];
+			this.onStartedDone = o["onStartedDone"];
+			this.onWaitEnd = o["onWaitEnd"];
+			this.onWaitEndDone = o["onWaitEndDone"]
+			this.onEnd = o["onEnd"];
+			this.onEndDone = o["onEndDone"];
+			this.onCooldown = o["onCooldown"];
+			this.onCooldownDone = o["onCooldownDone"];
+			this.onCountEnd = o["onCountEnd"];
+			this.groupSync();
+	};
+	behinstProto.tick = function ()
+	{
+		var dt = this.runtime.getDt(this.inst);
+		var isForceStop = (this.i == -1);
+		if (!this.active || dt === 0)
+			return;
+		if (this.i == 0) {
+			if (!this.onStarted) {
+				this.onStarted = true;
+				this.onStartedDone = false;
+				this.onWaitEnd = false;
+				this.onWaitEndDone = false;
+				this.onEnd = false;
+				this.onEndDone = false;
+				this.onCooldown = false;
+				this.onCooldownDone = false;
+				this.runtime.trigger(cr.behaviors.rex_lunarray_Tween_mod.prototype.cnds.OnStart, this.inst);
+				this.onStartedDone = true;
+			}
+		}
+		if (this.i == -1) {
+			this.i = this.initiating + this.duration + this.cooldown;
+		} else {
+			this.i += dt;
+		}
+		if (this.i <= this.initiating) {
+			return;
+		} else {
+			if (this.onWaitEnd == false) {
+				this.onWaitEnd = true;
+				this.runtime.trigger(cr.behaviors.rex_lunarray_Tween_mod.prototype.cnds.OnWaitEnd, this.inst);
+				this.onWaitEndDone = true;
+			}
+		}
+		if (this.i <= (this.duration + this.initiating)) {
+			var factor = this.easeFunc(this.i-this.initiating, 0, 1, this.duration);
+			if (this.tweened == 0) {
+				if (this.coord_mode == 1) {
+					if (this.inst.x !== this.lastKnownX) {
+						this.tweenInitialX += (this.inst.x - this.lastKnownX);
+						this.tweenTargetX += (this.inst.x - this.lastKnownX);
+					}
+					if (this.inst.y !== this.lastKnownY) {
+						this.tweenInitialY += (this.inst.y - this.lastKnownY);
+						this.tweenTargetY += (this.inst.y - this.lastKnownY);
+					}
+				} else {
+					if (this.inst.x !== this.lastKnownX)
+						this.tweenInitialX += (this.inst.x - this.lastKnownX);
+					if (this.inst.y !== this.lastKnownY)
+						this.tweenInitialY += (this.inst.y - this.lastKnownY);
+				}
+				this.inst.x = this.tweenInitialX + (this.tweenTargetX - this.tweenInitialX) * factor;
+				this.inst.y = this.tweenInitialY + (this.tweenTargetY - this.tweenInitialY) * factor;
+				this.lastKnownX = this.inst.x;
+				this.lastKnownY = this.inst.y;
+			} else if ((this.tweened == 1) || (this.tweened == 2) || (this.tweened == 3)) {
+				if (this.inst.width !== this.lastKnownX)
+					this.tweenInitialX = this.inst.width;
+				if (this.inst.height !== this.lastKnownY)
+					this.tweenInitialY = this.inst.height;
+				if (this.doTweenX) {
+					this.inst.width = this.tweenInitialX + (this.tweenTargetX - this.tweenInitialX) * factor;
+				}
+				if (this.doTweenY) {
+					this.inst.height = this.tweenInitialY + (this.tweenTargetY - this.tweenInitialY) * factor;
+				} else {
+					if (this.tweened == 1) {
+						this.inst.height = this.inst.width * this.ratio;
+					}
+				}
+				this.lastKnownX = this.inst.width;
+				this.lastKnownY = this.inst.height;
+			} else if (this.tweened == 4) {
+				var tangle = this.tweenInitialX + (this.tweenTargetAngle - this.tweenInitialX) * factor;
+				if (this.i >= (this.duration + this.initiating))
+					tangle = this.tweenTargetAngle;
+				this.inst.angle = cr.clamp_angle(tangle);
+			} else if (this.tweened == 5) {
+				if (this.coord_mode == 1) {
+					if (this.inst.opacity !== this.lastKnownX)
+						this.tweenInitialX = this.inst.opacity;
+				}
+				this.inst.opacity = this.tweenInitialX + (this.tweenTargetX - this.tweenInitialX) * factor;
+				this.lastKnownX = this.inst.opacity;
+			} else if (this.tweened == 6) {
+				this.value = this.tweenInitialX + (this.tweenTargetX - this.tweenInitialX) * factor;
+			} else if (this.tweened == 7) {
+				if (this.coord_mode == 1) {
+					if (this.inst.width !== this.lastKnownX)
+						this.tweenInitialX = this.inst.width;
+					if (this.inst.height !== this.lastKnownY)
+						this.tweenInitialY = this.inst.height;
+				}
+				if (this.doTweenX) this.inst.width = this.tweenInitialX + (this.tweenTargetX - this.tweenInitialX) * factor;
+				if (this.doTweenY) this.inst.height = this.tweenInitialY + (this.tweenTargetY - this.tweenInitialY) * factor;
+				this.lastKnownX = this.inst.width;
+				this.lastKnownY = this.inst.height;
+			}
+			this.inst.set_bbox_changed();
+		}
+		if (this.i >= this.duration + this.initiating) {
+			this.doEndFrame(isForceStop);
+			this.inst.set_bbox_changed();
+			if (this.onEnd == false) {
+				this.onEnd = true;
+				this.runtime.trigger(cr.behaviors.rex_lunarray_Tween_mod.prototype.cnds.OnEnd, this.inst);
+				this.onEndDone = true;
+			}
+		}
+	};
+	behinstProto.doEndFrame = function (isForceStop)
+	{
+		switch (this.tweened) {
+		case 0:		// position
+			this.inst.x = this.tweenTargetX;
+			this.inst.y = this.tweenTargetY;
+			break;
+		case 1:		// size
+			if (this.doTweenX) this.inst.width = this.tweenTargetX;
+			if (this.doTweenY) {
+				this.inst.height = this.tweenTargetY;
+			} else {
+				this.inst.height = this.inst.width * this.ratio;
+			}
+			break;
+		case 2:		// width
+			this.inst.width = this.tweenTargetX;
+			break;
+		case 3:		// height
+			this.inst.height = this.tweenTargetY;
+			break;
+		case 4:		// angle
+			var tangle = this.tweenTargetAngle;
+			this.inst.angle = cr.clamp_angle(tangle);
+			this.lastKnownValue = this.inst.angle;
+			break;
+		case 5:		// opacity
+			this.inst.opacity = this.tweenTargetX;
+			break;
+		case 6:		// value
+			this.value = this.tweenTargetX;
+			break;
+		case 7:		// size
+			if (this.doTweenX) this.inst.width = this.tweenTargetX;
+			if (this.doTweenY) this.inst.height = this.tweenTargetY;
+			break;
+		}
+		if (this.repeatcount > 0)
+		    this.repeatcount -= 1;
+		if (this.i >= this.duration + this.initiating + this.cooldown) {
+			if (this.playmode == 0) {
+				this.active = false;
+				this.reverse = false;
+				this.i = this.duration + this.initiating + this.cooldown;
+                this.onCountEnd = true;
+			} else if (this.playmode == 1) {
+				this.i = 0;
+				this.init();
+				this.onCountEnd = (this.repeatcount == 0);
+				this.active = (!this.onCountEnd);
+			} else if (this.playmode == 2) {
+				if (isForceStop) {
+					this.reverse = false;
+					this.init();
+				} else {
+					this.reverse = !this.reverse;
+					this.i = 0;
+					this.init();
+					this.onCountEnd = (this.repeatcount == 0);
+				    this.active = (!this.onCountEnd);
+				}
+			} else if (this.playmode == 3) {
+				this.runtime.DestroyInstance(this.inst);
+			} else if (this.playmode == 4) {
+				this.loop = true;
+				this.i = 0;
+				this.init();
+				this.onCountEnd = (this.repeatcount == 0);
+				this.active = (!this.onCountEnd);
+			} else if (this.playmode == 5) {
+				if (isForceStop) {
+					this.reverse = false;
+					this.init();
+				} else {
+					if (this.pingpongCounter <= 0) {
+						this.i = this.duration + this.initiating + this.cooldown;
+						this.onCountEnd = (this.repeatcount == 0);
+				        this.active = (!this.onCountEnd);
+					} else {
+						if (!this.reverse) {
+							this.pingpongCounter -= 1;
+							this.reverse = true;
+							this.i = 0;
+							this.init();
+							this.active = true;
+						} else {
+							this.pingpongCounter -= 1;
+							this.reverse = false;
+							this.i = 0;
+							this.init();
+							this.active = true;
+						}
+					}
+				}
+			} else if (this.playmode == -6) {
+				this.playmode = this.lastPlayMode;
+				this.reverse = false;
+				this.i = 0;
+				this.active = false;
+			} else if (this.playmode == 6) {
+				this.reverse = false;
+				this.i = this.duration + this.initiating + this.cooldown;
+				this.active = false;
+                this.onCountEnd = true;
+			}
+		}
+		if (this.onCooldown == false) {
+			this.onCooldown = true;
+			this.runtime.trigger(cr.behaviors.rex_lunarray_Tween_mod.prototype.cnds.OnCooldownEnd, this.inst);
+			this.onCooldownDone = true;
+		}
+		if (this.onCountEnd)
+		{
+		    this.runtime.trigger(cr.behaviors.rex_lunarray_Tween_mod.prototype.cnds.OnCountEnd, this.inst);
+		    this.onCountEnd = false;
+		}
+	};
+	behinstProto.setRepeatCount = function (cnt)
+    {
+	    this.repeatcount_save = cnt;
+		if (this.repeatcount_save <= 0)
+		    this.repeatcount_save = -1;
+		this.repeatcount = this.repeatcount_save;
+    };
+	behaviorProto.cnds = {};
+	var cnds = behaviorProto.cnds;
+	cnds.IsActive = function ()
+	{
+		return this.active;
+	};
+	cnds.CompareGroupProgress = function (cmp, v)
+	{
+		var x = [];
+		cr.lunarray_tweenGroup[this.group].forEach(function (value) {
+			x.push((value.i / (value.duration + value.initiating + value.cooldown)));
+		} );
+		return cr.do_cmp(	Math.min.apply(null, x), cmp, v );
+	}
+	cnds.CompareProgress = function (cmp, v)
+	{
+		return cr.do_cmp((this.i / (this.duration + this.initiating + this.cooldown)), cmp, v);
+	};
+	cnds.OnStart = function ()
+	{
+		if (this.onStartedDone === false) {
+			return this.onStarted;
+		}
+	};
+    cnds.OnWaitEnd = function ()
+	{
+		if (this.onWaitEndDone === false) {
+			return this.onWaitEnd;
+		}
+	};
+    cnds.OnEnd = function (a, b, c)
+	{
+		if (this.onEndDone === false) {
+			return this.onEnd;
+		}
+	};
+    cnds.OnCooldownEnd = function ()
+	{
+		if (this.onCooldownDone === false) {
+			return this.onCooldown;
+		}
+	};
+    cnds.OnCountEnd = function ()
+	{
+		return this.onCountEnd;
+	};
+	behaviorProto.acts = {};
+	var acts = behaviorProto.acts;
+	acts.SetActive = function (a)
+	{
+		this.active = (a === 1);
+	};
+	acts.StartGroup = function (force, sgroup)
+	{
+		if (sgroup === "") sgroup = this.group;
+		var groupReady = (force === 1) || cr.lunarray_tweenGroup[sgroup].every(function(value2) { return !value2.active; } );
+		if ( groupReady ) {
+			cr.lunarray_tweenGroup[sgroup].forEach(
+				function(value) {
+					if (force === 1) {
+						acts.Force.apply(value);
+					} else {
+						acts.Start.apply(value);
+					}
+				}
+			);
+		}
+	}
+	acts.StopGroup = function (stopmode, sgroup)
+	{
+		if (sgroup === "") sgroup = this.group;
+		cr.lunarray_tweenGroup[sgroup].forEach( function(value) {
+			acts.Stop.apply(value, [stopmode]);
+		} );
+	}
+	acts.ReverseGroup = function (force, rewindMode, sgroup)
+	{
+		if (sgroup === "") sgroup = this.group;
+		var groupReady = (force === 1) || cr.lunarray_tweenGroup[sgroup].every(function(value2) { return !value2.active; } );
+		if ( groupReady ) {
+			cr.lunarray_tweenGroup[sgroup].forEach(
+				function(value) {
+					if (force === 1) {
+						acts.ForceReverse.apply(value, [rewindMode]);
+					} else {
+						acts.Reverse.apply(value, [rewindMode]);
+					}
+				}
+			);
+		}
+	}
+	acts.Force = function ()
+	{
+		this.loop = (this.playmode === 4);
+		if (this.playmode == 5) this.pingpongCounter = 1;
+		if ((this.playmode == 6) || (this.playmode == -6)) {
+			if (this.i < this.duration + this.cooldown + this.initiating) {
+				this.reverse = false;
+				this.init();
+				this.active = true;
+			}
+		} else {
+			this.reverse = false;
+			this.i = 0;
+			this.init();
+			this.active = true;
+		}
+	};
+	acts.ForceReverse = function (rewindMode)
+	{
+		this.rewindMode = (rewindMode == 1);
+		this.loop = (this.playmode === 4);
+		if (this.playmode == 5) this.pingpongCounter = 1;
+		if ((this.playmode == 6) || (this.playmode == -6)) {
+			if (this.i < this.duration + this.cooldown + this.initiating) {
+				this.reverse = true;
+				this.init();
+				this.active = true;
+			}
+		} else {
+			if (rewindMode) {
+				if (this.pingpongCounter == 1) {
+					if (this.i >= this.duration + this.cooldown + this.initiating) {
+						this.reverse = true;
+						this.i = 0;
+						this.pingpongCounter = 2;
+						this.init();
+						this.active = true;
+					}
+				}
+			} else {
+				this.reverse = true;
+				this.i = 0;
+				this.init();
+				this.active = true;
+			}
+		}
+	};
+	acts.Start = function ()
+	{
+		if (!this.active) {
+		    this.repeatcount = this.repeatcount_save;
+			this.loop = (this.playmode === 4);
+			if (this.playmode == 5) this.pingpongCounter = 1;
+			if ((this.playmode == 6) || (this.playmode == -6)) {
+				if (this.i < this.duration + this.cooldown + this.initiating) {
+					this.reverse = false;
+					this.init();
+					this.active = true;
+				}
+			} else {
+				this.pingpongCounter = 1;
+				this.reverse = false;
+				this.i = 0;
+				this.init();
+				this.active = true;
+			}
+		}
+	};
+	acts.Stop = function (stopmode)
+	{
+		if (this.active) {
+			if ((this.playmode == 2) || (this.playmode == 4)) {
+				if (this.reverse) {
+					this.i = 0;
+				} else {
+					this.i = -1;
+				}
+			} else {
+				if (stopmode == 1) {
+					this.saveState();
+				} else if (stopmode == 0) {
+					this.i = this.initiating + this.cooldown + this.duration;
+				} else {
+					this.i = 0;
+				}
+			}
+			this.tick();
+			this.active = false;
+		}
+	};
+	acts.Pause = function () {
+		if (this.active) {
+			this.isPaused = true;
+			this.active = false;
+		}
+	}
+	acts.Resume = function () {
+		if (this.isPaused) {
+			this.active = true;
+			this.isPaused = false;
+		} else {
+			if (!this.active) {
+				this.reverse = false;
+				this.i = 0;
+				this.init();
+				this.active = true;
+			}
+		}
+	}
+	acts.Reverse = function (rewindMode)
+	{
+		this.rewindMode = (rewindMode == 1);
+		if (!this.active) {
+			this.loop = (this.playmode === 4);
+			if (this.playmode == 5) this.pingpongCounter = 1;
+			if ((this.playmode == 6) || (this.playmode == -6)) {
+				if (this.i < this.duration + this.cooldown + this.initiating) {
+					this.reverse = true;
+					this.init();
+					this.active = true;
+				}
+			} else {
+				if (rewindMode) {
+					if (this.pingpongCounter == 1) {
+						if (this.i >= this.duration + this.cooldown + this.initiating) {
+							this.reverse = true;
+							this.i = 0;
+							this.pingpongCounter = 2;
+							this.init();
+							this.active = true;
+						}
+					}
+				} else {
+					this.reverse = true;
+					this.i = 0;
+					this.init();
+					this.active = true;
+				}
+			}
+		}
+	};
+	acts.SetDuration = function (x)
+	{
+		this.duration = x;
+	};
+	acts.SetWait = function (x)
+	{
+		this.wait = x;
+		this.initiating = parseFloat(this.wait.split(",")[0]);
+		this.cooldown = parseFloat(this.wait.split(",")[1]);
+		if ((this.initiating < 0) || (isNaN(this.initiating)))	this.initiating = 0;
+		if ((this.cooldown < 0) || (isNaN(this.cooldown)))	this.cooldown = 0;
+	};
+	acts.SetTarget = function (x)
+	{
+		if (typeof(x) == "string") {
+			this.target = x;
+			this.targetX = parseFloat(x.split(",")[0]);
+			this.targetY = parseFloat(x.split(",")[1]);
+		} else {
+			this.target = x;
+			this.targetX = x;
+		}
+		if (!this.active) {
+			this.init();
+		} else {
+		}
+	};
+	acts.SetTargetObject = function (obj)
+	{
+		if (!obj)
+			return;
+		var otherinst = obj.getFirstPicked();
+		if (!otherinst)
+			return;
+		this.targetObject = otherinst;
+		this.target = "OBJ";
+	};
+	acts.SetRepeatCount = function (cnt)
+	{
+	    this.setRepeatCount(cnt);
+	};
+	acts.SetTargetX = function (x)
+	{
+		if ((this.tweened == 2) || (this.tweened == 3) || (this.tweened == 4) || (this.tweened == 5) || (this.tweened == 6)) {
+			if (typeof(x) == "string") {
+				this.target = parseFloat(x.split(",")[0]);
+			} else {
+				this.target = ""+x+","+this.targetY;
+			}
+			this.targetX = this.target;
+		} else {
+			var currY = this.target.split(",")[1];
+			this.target = String(x) + "," + currY;
+			this.targetX = parseFloat(this.target.split(",")[0]);
+			this.targetY = parseFloat(this.target.split(",")[1]);
+		}
+		if (!this.active) {
+			this.saveState();
+			this.init();
+		} else {
+		}
+	};
+	acts.SetTargetY = function (x)
+	{
+		if ((this.tweened == 2) || (this.tweened == 3) || (this.tweened == 4) || (this.tweened == 5) || (this.tweened == 6)) {
+			if (typeof(x) == "string") {
+				this.target = parseFloat(x)+"";
+			} else {
+				this.target = this.targetX+","+x;
+			}
+			this.targetX = this.target;
+		} else {
+			var currX = this.target.split(",")[0];
+			this.target = currX + "," + String(x);
+			this.targetX = parseFloat(this.target.split(",")[0]);
+			this.targetY = parseFloat(this.target.split(",")[1]);
+		}
+		if (!this.active) {
+			this.saveState();
+			this.init();
+		} else {
+		}
+	};
+	acts.SetInitial = function (x)
+	{
+		if (typeof(x) == "string") {
+			this.initial = x;
+			this.initialX = parseFloat(x.split(",")[0]);
+			this.initialY = parseFloat(x.split(",")[1]);
+		} else {
+			this.initial = ""+x;
+			this.initialX = x;
+		}
+		if (this.tweened == 6) {
+			this.value = this.initialX;
+		}
+		if (!this.active) {
+			this.saveState();
+			this.init();
+		} else {
+		}
+	};
+	acts.SetInitialX = function (x)
+	{
+		if ((this.tweened == 2) || (this.tweened == 3) || (this.tweened == 4) || (this.tweened == 5) || (this.tweened == 6)) {
+			if (typeof(x) == "string") {
+				this.initial = parseFloat(x);
+			} else {
+				this.initial = ""+x+","+this.initialY;
+			}
+			this.initialX = this.initial;
+		} else {
+			if (this.initial == "") this.initial = "current";
+			if (this.initial == "current") {
+				var currY = this.tweenSaveY;
+			} else {
+				var currY = this.initial.split(",")[1];
+			}
+			this.initial = String(x) + "," + currY;
+			this.initialX = parseFloat(this.initial.split(",")[0]);
+			this.initialY = parseFloat(this.initial.split(",")[1]);
+		}
+		if (this.tweened == 6) {
+			this.value = this.initialX;
+		}
+		if (!this.active) {
+			this.saveState();
+			this.init();
+		} else {
+		}
+	};
+	acts.SetInitialY = function (x)
+	{
+		if ((this.tweened == 2) || (this.tweened == 3) || (this.tweened == 4) || (this.tweened == 5) || (this.tweened == 6)) {
+			if (typeof(x) == "string") {
+				this.initial = parseFloat(x);
+			} else {
+				this.initial = ""+this.initialX+","+x;
+			}
+			this.initialX = this.initial;
+		} else {
+			if (this.initial == "") this.initial = "current";
+			if (this.initial == "current") {
+				var currX = this.tweenSaveX;
+			} else {
+				var currX = this.initial.split(",")[0];
+			}
+			this.initial = currX + "," + String(x);
+			this.initialX = parseFloat(this.initial.split(",")[0]);
+			this.initialY = parseFloat(this.initial.split(",")[1]);
+		}
+		if (!this.active) {
+			this.saveState();
+			this.init();
+		} else {
+		}
+	};
+	acts.SetValue = function (x)
+	{
+		this.value = x;
+	};
+	acts.SetTweenedProperty = function (m)
+	{
+		this.tweened = m;
+	};
+	acts.SetEasing = function (w)
+	{
+		this.easing = w;
+	};
+	acts.SetPlayback = function (x)
+	{
+		this.playmode = x;
+	};
+	acts.SetParameter = function (tweened, playmode, easefunction, initial, target, duration, wait, cmode)
+	{
+        if (typeof(easefunction) == "string")
+        {
+            easefunction = alias_map[easefunction];
+            if (easefunction == null)
+                easefunction = 0;
+        }
+		this.tweened = tweened;
+		this.playmode = playmode;
+		this.easing = easefunction;
+		acts.SetInitial.apply(this, [initial]);
+		acts.SetTarget.apply(this, [target]);
+		acts.SetDuration.apply(this, [duration]);
+		acts.SetWait.apply(this, [wait]);
+		this.coord_mode = cmode;
+		this.saveState();
+	};
+    var alias_map = {};
+	acts.SetEasingAlias = function (alias, easefunction)
+	{
+		alias_map[alias] = easefunction;
+	};
+	behaviorProto.exps = {};
+	var exps = behaviorProto.exps;
+	exps.Progress = function (ret)
+	{
+		ret.set_float(this.i / (this.duration + this.initiating + this.cooldown));
+	};
+	exps.ProgressTime = function (ret)
+	{
+		ret.set_float(this.i);
+	};
+	exps.Duration = function (ret)
+	{
+		ret.set_float(this.duration);
+	};
+	exps.Initiating = function (ret)
+	{
+		ret.set_float(this.initiating);
+	};
+	exps.Cooldown = function (ret)
+	{
+		ret.set_float(this.cooldown);
+	};
+	exps.Target = function (ret)
+	{
+		ret.set_string(this.target);
+	};
+	exps.Value = function (ret)
+	{
+		ret.set_float(this.value);
+	};
+	exps.isPaused = function (ret)
+	{
+		ret.set_int(this.isPaused ? 1: 0);
+	};
+}());
+;
+;
 cr.behaviors.scrollto = function(runtime)
 {
 	this.runtime = runtime;
@@ -25636,69 +31826,119 @@ cr.behaviors.scrollto = function(runtime)
 	behaviorProto.acts = new Acts();
 }());
 cr.getObjectRefTable = function () { return [
+	cr.plugins_.NinePatch,
+	cr.plugins_.AJAX,
 	cr.plugins_.Browser,
-	cr.plugins_.Button,
-	cr.plugins_.filechooser,
 	cr.plugins_.Function,
+	cr.plugins_.Rex_Comment,
+	cr.plugins_.Rex_canvas,
+	cr.plugins_.Rex_Container,
+	cr.plugins_.Rex_fnCallPkg,
+	cr.plugins_.Rex_GridCtrl,
+	cr.plugins_.Rex_Hash,
+	cr.plugins_.Rex_JSONBuider,
+	cr.plugins_.Rex_jsshell,
+	cr.plugins_.Rex_Nickname,
+	cr.plugins_.Rex_SysExt,
+	cr.plugins_.Rex_taffydb,
 	cr.plugins_.Sprite,
 	cr.plugins_.Text,
 	cr.plugins_.WebStorage,
 	cr.plugins_.Rex_TimeAway,
-	cr.plugins_.rex_TouchWrap,
-	cr.plugins_.Rex_WebstorageExt,
-	cr.plugins_.Rex_canvas,
-	cr.plugins_.Rex_fnCallPkg,
-	cr.plugins_.Rex_JSONBuider,
-	cr.plugins_.Rex_Hash,
-	cr.plugins_.Rex_jsshell,
-	cr.plugins_.Rex_Nickname,
-	cr.plugins_.Rex_taffydb,
 	cr.plugins_.rex_TagText,
+	cr.plugins_.Rex_WaitEvent,
+	cr.plugins_.Rex_WebstorageExt,
+	cr.plugins_.rex_TouchWrap,
 	cr.behaviors.scrollto,
+	cr.behaviors.Rex_boundary,
+	cr.behaviors.Sin,
 	cr.behaviors.Rex_Button2,
+	cr.behaviors.rex_lunarray_Tween_mod,
 	cr.behaviors.rex_Anchor_mod,
+	cr.behaviors.Rex_SpeedMoinitor,
+	cr.behaviors.Rex_Slowdown,
+	cr.behaviors.Rex_TouchArea2,
+	cr.behaviors.Rex_DragDrop2,
 	cr.behaviors.Rex_bNickname,
 	cr.system_object.prototype.cnds.OnLayoutStart,
+	cr.system_object.prototype.acts.SetVar,
+	cr.system_object.prototype.cnds.CompareVar,
+	cr.plugins_.Rex_Nickname.prototype.acts.AssignNickname,
+	cr.plugins_.Browser.prototype.acts.ConsoleLog,
+	cr.system_object.prototype.exps.projectversion,
+	cr.behaviors.Rex_Button2.prototype.acts.GotoINACTIVE,
+	cr.plugins_.WebStorage.prototype.cnds.LocalStorageExists,
+	cr.plugins_.Rex_taffydb.prototype.acts.InsertJSON,
+	cr.plugins_.WebStorage.prototype.exps.LocalValue,
+	cr.behaviors.Rex_Button2.prototype.acts.GotoACTIVE,
+	cr.system_object.prototype.cnds.Else,
+	cr.plugins_.Rex_WaitEvent.prototype.acts.WaitEvent,
+	cr.plugins_.AJAX.prototype.acts.RequestFile,
+	cr.plugins_.AJAX.prototype.cnds.OnComplete,
+	cr.plugins_.Rex_taffydb.prototype.acts.InsertCSV,
+	cr.plugins_.AJAX.prototype.exps.LastData,
+	cr.plugins_.Rex_WaitEvent.prototype.acts.EventFinished,
+	cr.plugins_.Function.prototype.acts.CallFunction,
+	cr.plugins_.Rex_WaitEvent.prototype.cnds.OnAllEventsFinished,
+	cr.system_object.prototype.exps.viewportright,
+	cr.system_object.prototype.exps.viewportleft,
+	cr.plugins_.Rex_taffydb.prototype.acts.NewFilters,
+	cr.plugins_.Rex_taffydb.prototype.acts.AddValueComparsion,
+	cr.plugins_.Rex_taffydb.prototype.cnds.ForEachRow,
+	cr.plugins_.Rex_taffydb.prototype.exps.CurRowContent,
+	cr.plugins_.rex_TagText.prototype.acts.SetText,
+	cr.plugins_.Function.prototype.cnds.OnFunction,
+	cr.plugins_.Rex_Container.prototype.cnds.PickByUID,
+	cr.system_object.prototype.exps["int"],
+	cr.plugins_.Function.prototype.exps.Param,
+	cr.plugins_.Rex_Nickname.prototype.acts.CreateInst,
+	cr.plugins_.Rex_Container.prototype.exps.X,
+	cr.plugins_.Rex_Container.prototype.exps.Y,
+	cr.plugins_.Rex_Container.prototype.exps.LayerName,
+	cr.plugins_.Sprite.prototype.acts.SetScale,
+	cr.plugins_.Sprite.prototype.acts.SetInstanceVar,
+	cr.plugins_.Rex_Container.prototype.acts.AddInsts,
+	cr.plugins_.Sprite.prototype.acts.MoveToTop,
 	cr.behaviors.Rex_Button2.prototype.cnds.OnClick,
+	cr.system_object.prototype.cnds.Compare,
+	cr.behaviors.Rex_TouchArea2.prototype.exps.Distance,
 	cr.plugins_.Sprite.prototype.cnds.CompareInstanceVar,
 	cr.plugins_.Rex_fnCallPkg.prototype.acts.CallFunction,
-	cr.plugins_.Function.prototype.cnds.OnFunction,
+	cr.plugins_.WebStorage.prototype.acts.StoreLocal,
+	cr.plugins_.Rex_taffydb.prototype.exps.AllRowsAsJSON,
 	cr.system_object.prototype.acts.GoToLayoutByName,
-	cr.plugins_.Function.prototype.exps.Param,
-	cr.system_object.prototype.cnds.Compare,
+	cr.system_object.prototype.acts.GoToLayout,
 	cr.plugins_.Rex_WebstorageExt.prototype.exps.LocalValue,
-	cr.plugins_.Function.prototype.acts.CallFunction,
-	cr.system_object.prototype.cnds.Else,
-	cr.system_object.prototype.cnds.IsGroupActive,
 	cr.system_object.prototype.cnds.Every,
-	cr.system_object.prototype.acts.SetVar,
-	cr.plugins_.Rex_jsshell.prototype.exps.Prop,
-	cr.plugins_.Text.prototype.acts.SetText,
-	cr.system_object.prototype.exps.newline,
-	cr.plugins_.Text.prototype.acts.AppendText,
-	cr.plugins_.Button.prototype.cnds.OnClicked,
+	cr.plugins_.Rex_TimeAway.prototype.exps.ElapsedTime,
+	cr.plugins_.Rex_TimeAway.prototype.acts.StartTimer,
+	cr.system_object.prototype.exps.min,
+	cr.system_object.prototype.exps.floor,
+	cr.behaviors.Rex_Button2.prototype.cnds.OnRollingIn,
+	cr.plugins_.Sprite.prototype.acts.SetAnimFrame,
+	cr.behaviors.Rex_Button2.prototype.cnds.OnRollingOut,
+	cr.system_object.prototype.cnds.IsGroupActive,
 	cr.plugins_.Rex_jsshell.prototype.acts.SetFunctionName,
 	cr.plugins_.Rex_jsshell.prototype.acts.AddValue,
 	cr.plugins_.Rex_jsshell.prototype.acts.AddCallback,
 	cr.plugins_.Rex_jsshell.prototype.acts.InvokeFunction,
 	cr.plugins_.Rex_jsshell.prototype.cnds.OnCallback,
+	cr.plugins_.Text.prototype.acts.SetText,
 	cr.plugins_.Rex_jsshell.prototype.exps.Param,
-	cr.plugins_.WebStorage.prototype.acts.StoreLocal,
-	cr.plugins_.Rex_Hash.prototype.acts.CleanAll,
-	cr.plugins_.Rex_Hash.prototype.acts.InsertValue,
-	cr.plugins_.Rex_Hash.prototype.exps.AtKeys,
-	cr.plugins_.Rex_jsshell.prototype.acts.AddJSON,
 	cr.plugins_.Rex_JSONBuider.prototype.acts.Clean,
 	cr.plugins_.Rex_JSONBuider.prototype.cnds.SetRoot,
 	cr.plugins_.Rex_JSONBuider.prototype.acts.AddValue,
+	cr.plugins_.Rex_jsshell.prototype.acts.AddJSON,
 	cr.plugins_.Rex_JSONBuider.prototype.exps.AsJSON,
 	cr.plugins_.Rex_Hash.prototype.acts.StringToHashTable,
+	cr.plugins_.Text.prototype.acts.AppendText,
 	cr.plugins_.Rex_Hash.prototype.exps.At,
-	cr.system_object.prototype.exps["int"],
+	cr.system_object.prototype.exps.newline,
+	cr.plugins_.Rex_Hash.prototype.acts.CleanAll,
+	cr.plugins_.Rex_Hash.prototype.acts.InsertValue,
+	cr.plugins_.Rex_Hash.prototype.exps.AtKeys,
 	cr.plugins_.Rex_JSONBuider.prototype.acts.AddBooleanValue,
-	cr.plugins_.Browser.prototype.acts.ConsoleLog,
 	cr.plugins_.Rex_Hash.prototype.exps.AsJSON,
-	cr.plugins_.Rex_canvas.prototype.acts.LoadURL,
 	cr.plugins_.Browser.prototype.acts.ExecJs,
 	cr.plugins_.Rex_jsshell.prototype.acts.AddObject,
 	cr.system_object.prototype.acts.SnapshotCanvas,
@@ -25708,13 +31948,76 @@ cr.getObjectRefTable = function () { return [
 	cr.plugins_.Browser.prototype.cnds.OnBackButton,
 	cr.system_object.prototype.exps.time,
 	cr.plugins_.Browser.prototype.acts.Close,
-	cr.plugins_.filechooser.prototype.cnds.OnChanged,
-	cr.plugins_.filechooser.prototype.exps.FileURLAt,
-	cr.plugins_.Rex_TimeAway.prototype.exps.ElapsedTime,
-	cr.plugins_.Rex_TimeAway.prototype.acts.StartTimer,
-	cr.system_object.prototype.exps.min,
-	cr.system_object.prototype.exps.floor,
-	cr.behaviors.Rex_Button2.prototype.cnds.OnRollingIn,
-	cr.plugins_.Sprite.prototype.acts.SetAnimFrame,
-	cr.behaviors.Rex_Button2.prototype.cnds.OnRollingOut
+	cr.plugins_.Sprite.prototype.exps.AnimationFrame,
+	cr.plugins_.Sprite.prototype.exps.AnimationFrameCount,
+	cr.plugins_.Sprite.prototype.exps.AnimationName,
+	cr.plugins_.Rex_taffydb.prototype.exps.QueriedRowsCount,
+	cr.system_object.prototype.acts.CreateObject,
+	cr.plugins_.Sprite.prototype.exps.ImagePointX,
+	cr.plugins_.Sprite.prototype.exps.ImagePointY,
+	cr.plugins_.rex_TagText.prototype.acts.SetInstanceVar,
+	cr.plugins_.Rex_taffydb.prototype.exps.Index2QueriedRowContent,
+	cr.plugins_.Rex_Comment.prototype.acts.NOOP,
+	cr.plugins_.Rex_fnCallPkg.prototype.acts.CleanFnQueue,
+	cr.plugins_.Rex_fnCallPkg.prototype.acts.PushToFnQueue2,
+	cr.plugins_.Rex_fnCallPkg.prototype.exps.FnQueuePkg,
+	cr.system_object.prototype.cnds.ForEach,
+	cr.plugins_.Sprite.prototype.exps.LayerName,
+	cr.plugins_.Sprite.prototype.exps.Y,
+	cr.plugins_.Sprite.prototype.acts.SetHeight,
+	cr.plugins_.Sprite.prototype.exps.Height,
+	cr.behaviors.Rex_boundary.prototype.acts.SetVerticalBoundary,
+	cr.plugins_.Sprite.prototype.exps.UID,
+	cr.plugins_.Sprite.prototype.cnds.PickByUID,
+	cr.plugins_.Rex_GridCtrl.prototype.exps.OY,
+	cr.plugins_.Rex_GridCtrl.prototype.exps.BottomOY,
+	cr.plugins_.Sprite.prototype.acts.SetY,
+	cr.system_object.prototype.exps.max,
+	cr.behaviors.Rex_boundary.prototype.exps.TopBound,
+	cr.behaviors.Rex_boundary.prototype.exps.BottomBound,
+	cr.behaviors.Rex_TouchArea2.prototype.cnds.OnTouchStart,
+	cr.behaviors.Rex_Slowdown.prototype.cnds.IsMoving,
+	cr.behaviors.Rex_Slowdown.prototype.acts.Stop,
+	cr.behaviors.Rex_TouchArea2.prototype.cnds.OnTouchMoving,
+	cr.plugins_.Rex_GridCtrl.prototype.cnds.PickByUID,
+	cr.plugins_.Rex_GridCtrl.prototype.acts.AddOY,
+	cr.behaviors.Rex_TouchArea2.prototype.exps.DeltaY,
+	cr.behaviors.Rex_TouchArea2.prototype.exps.DeltaX,
+	cr.behaviors.Rex_TouchArea2.prototype.cnds.OnTouchEnd,
+	cr.behaviors.Rex_Slowdown.prototype.acts.Start,
+	cr.behaviors.Rex_SpeedMoinitor.prototype.exps.Speed,
+	cr.behaviors.Rex_SpeedMoinitor.prototype.exps.Angle,
+	cr.system_object.prototype.cnds.EveryTick,
+	cr.plugins_.Rex_GridCtrl.prototype.cnds.IsOYOutOfBound,
+	cr.plugins_.rex_TouchWrap.prototype.cnds.IsInTouch,
+	cr.plugins_.Rex_GridCtrl.prototype.exps.UID,
+	cr.plugins_.Rex_GridCtrl.prototype.exps.Height,
+	cr.plugins_.Rex_GridCtrl.prototype.exps.Width,
+	cr.plugins_.Rex_GridCtrl.prototype.exps.ListHeight,
+	cr.behaviors.Rex_TouchArea2.prototype.acts.SetEnabled,
+	cr.plugins_.Sprite.prototype.acts.SetVisible,
+	cr.system_object.prototype.exps["float"],
+	cr.plugins_.Sprite.prototype.acts.SetSize,
+	cr.plugins_.Sprite.prototype.exps.X,
+	cr.plugins_.Sprite.prototype.exps.BBoxTop,
+	cr.plugins_.Rex_GridCtrl.prototype.acts.SetColumnNumber,
+	cr.plugins_.Rex_GridCtrl.prototype.acts.SetDefaultCellWidth,
+	cr.plugins_.Rex_GridCtrl.prototype.acts.SetDefaultCellHeight,
+	cr.plugins_.Rex_GridCtrl.prototype.acts.SetHeight,
+	cr.plugins_.Rex_GridCtrl.prototype.acts.SetInstanceVar,
+	cr.plugins_.Rex_GridCtrl.prototype.acts.SetCellsCount,
+	cr.plugins_.Rex_GridCtrl.prototype.acts.RefreshVisibleCells,
+	cr.plugins_.Rex_GridCtrl.prototype.cnds.OnCellVisible,
+	cr.plugins_.Rex_GridCtrl.prototype.exps.CellTLX,
+	cr.plugins_.Rex_GridCtrl.prototype.exps.CellTLY,
+	cr.plugins_.Rex_GridCtrl.prototype.exps.LayerName,
+	cr.plugins_.Rex_Container.prototype.acts.SetInstanceVar,
+	cr.plugins_.Rex_GridCtrl.prototype.exps.CellIndex,
+	cr.plugins_.Rex_GridCtrl.prototype.exps.DefaultCellWidth,
+	cr.plugins_.Rex_GridCtrl.prototype.exps.DefaultCellHeight,
+	cr.plugins_.Rex_GridCtrl.prototype.acts.PinInstToCell,
+	cr.plugins_.Rex_Container.prototype.exps.UID,
+	cr.plugins_.Rex_GridCtrl.prototype.cnds.OnCellInvisible,
+	cr.plugins_.Rex_Container.prototype.cnds.CompareInstanceVar,
+	cr.plugins_.Rex_Container.prototype.acts.Destroy
 ];};
