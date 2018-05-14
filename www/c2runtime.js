@@ -19816,6 +19816,617 @@ cr.plugins_.Rex_Nickname = function (runtime) {
 }());
 ;
 ;
+cr.plugins_.Rex_PatternGen = function(runtime)
+{
+	this.runtime = runtime;
+};
+(function ()
+{
+	var pluginProto = cr.plugins_.Rex_PatternGen.prototype;
+	pluginProto.Type = function(plugin)
+	{
+		this.plugin = plugin;
+		this.runtime = plugin.runtime;
+	};
+	var typeProto = pluginProto.Type.prototype;
+	typeProto.onCreate = function()
+	{
+	};
+	pluginProto.Instance = function(type)
+	{
+		this.type = type;
+		this.runtime = type.runtime;
+	};
+	var instanceProto = pluginProto.Instance.prototype;
+	instanceProto.onCreate = function()
+	{
+	    this.mode = this.properties[0];
+        var initPatterns = this.properties[1];
+        if (initPatterns != "")
+            this.patterns = JSON.parse(initPatterns);
+        else
+            this.patterns = {};
+	    this.patternsRank = [];
+        this.shadowPatterns = {};
+        this.startGen();
+		this.randomGenObj = null;
+        this.exp_LastPattern = "";
+        this.exp_CurPatternName = "";
+        this.exp_LoopIndex = -1;
+        this.randomGenUid = -1;    // for loading
+	};
+	instanceProto.resetPatternsRank = function(patterns)
+	{
+	    var pat;
+	    this.patternsRank.length = 0;
+	    var pat, count, totalCount=0;
+	    for (pat in patterns)
+	    {
+	        count = patterns[pat];
+	        if (count > 0)
+	            totalCount += count;
+	    }
+	    for (pat in patterns)
+	    {
+	        count = patterns[pat];
+	        if (count > 0)
+	        {
+	            this.patternsRank.push(
+					{"rate":count/totalCount,
+				  	 "pattern":pat}
+				);
+	        }
+	    }
+	};
+	instanceProto.getRandomValue = function()
+	{
+	    var value = (this.randomGenObj == null)?
+			        Math.random(): this.randomGenObj.random();
+        return value;
+	};
+	instanceProto.getRandomPattern = function(pat_rank)
+	{
+	    var value = this.getRandomValue();
+	    var pattern="", i, cnt=pat_rank.length;
+	    for (i=0; i<cnt; i++)
+	    {
+	        value -= pat_rank[i]["rate"];
+	        if (value < 0)
+	        {
+	            pattern = pat_rank[i]["pattern"];
+	            break;
+	        }
+	    }
+	    return pattern;
+	};
+	instanceProto.startGen = function()
+	{
+	    var pat,count;
+	    for (pat in this.shadowPatterns)
+	        delete this.shadowPatterns[pat];
+	    for (pat in this.patterns)
+	    {
+	        count = this.patterns[pat];
+	        if (count > 0)
+	            this.shadowPatterns[pat] = this.patterns[pat];
+	    }
+	    if (this.mode == 1) // random mode
+	        this.resetPatternsRank(this.shadowPatterns);
+	    this.restartGenFlg = false;
+	};
+	var isTableEmpty = function(table)
+	{
+	    var isEmpty=true;
+	    var pat;
+	    for (pat in table)
+	    {
+	        isEmpty = false;
+	        break;
+	    }
+	    return isEmpty;
+	};
+	instanceProto.addShadowPattern = function(pattern, inc, max_count)
+	{
+	    if ((pattern == null) || (inc == 0))
+	        return;
+        if (!this.shadowPatterns.hasOwnProperty(pattern))
+            this.shadowPatterns[pattern] = 0;
+        this.shadowPatterns[pattern] += inc;
+        if ((max_count != null) && (this.shadowPatterns[pattern] > max_count))
+            this.shadowPatterns[pattern] = max_count
+        if (this.shadowPatterns[pattern] <= 0)
+            delete this.shadowPatterns[pattern];
+        if ((this.mode == 0) && isTableEmpty(this.shadowPatterns))
+            this.restartGenFlg = true;
+	};
+	instanceProto.genPattern = function(pattern)
+	{
+	    if (this.restartGenFlg)
+	        this.startGen();
+	    if (pattern == null)
+		{
+	        if ((this.mode == 0) || (this.mode == 2))  // shuffle mode
+	        {
+	            this.resetPatternsRank(this.shadowPatterns);
+	            pattern = this.getRandomPattern(this.patternsRank);
+	            this.addShadowPattern(pattern, -1);
+	        }
+	        else if (this.mode == 1)   // random mode
+	        {
+	            pattern = this.getRandomPattern(this.patternsRank);
+	        }
+		}
+		else  // force pick
+		{
+			if (!this.shadowPatterns.hasOwnProperty(pattern))
+				pattern = "";
+            else
+            {
+			    if ((this.mode == 0) || (this.mode == 2))  // shuffle mode
+	            {
+	                this.addShadowPattern(pattern, -1);
+			    }
+			}
+		}
+	    return pattern;
+	};
+	instanceProto.getPatternCount = function (name, is_remain)
+	{
+        var patList = (is_remain)? this.shadowPatterns : this.patterns;
+        return patList[name] || 0;
+	};
+	instanceProto.saveToJSON = function ()
+	{
+        var randomGenUid = (this.randomGenObj != null)? this.randomGenObj.uid:(-1);
+		return { "m": this.mode,
+		         "pats": this.patterns,
+		         "pr": this.patternsRank,
+		         "spats": this.shadowPatterns,
+		         "rstf": this.restartGenFlg,
+                 "randomuid":randomGenUid,
+                 "lp" : this.exp_LastPattern,
+                 };
+	};
+	instanceProto.loadFromJSON = function (o)
+	{
+	    this.mode = o["m"];
+	    this.patterns = o["pats"];
+	    this.patternsRank = o["pr"];
+	    this.shadowPatterns = o["spats"];
+	    this.restartGenFlg = o["rstf"];
+        this.randomGenUid = o["randomuid"];
+        this.exp_LastPattern = o["lp"];
+	};
+	instanceProto.afterLoad = function ()
+	{
+        var randomGen;
+		if (this.randomGenUid === -1)
+			randomGen = null;
+		else
+		{
+			randomGen = this.runtime.getObjectByUID(this.randomGenUid);
+;
+		}
+		this.randomGenUid = -1;
+		this.randomGenObj = randomGen;
+	};
+	function Cnds() {};
+	pluginProto.cnds = new Cnds();
+    var countAscending = function(a, b)
+    {
+        if (a[1] > b[1])
+            return 1;
+        else if (a[1] == b[1])
+            return 0;
+        else  // ay < by
+            return (-1);
+    };
+    var countDescending = function(a, b)
+    {
+        if (a[1] < b[1])
+            return 1;
+        else if (a[1] == b[1])
+            return 0;
+        else  // ay < by
+            return (-1);
+    };
+    var nameAscending = function(a, b)
+    {
+        if (a[0] > b[0])
+            return 1;
+        else if (a[0] == b[0])
+            return 0;
+        else
+            return (-1);
+    };
+    var nameDescending = function(a, b)
+    {
+        if (a[0] < b[0])
+            return 1;
+        else if (a[0] == b[0])
+            return 0;
+        else
+            return (-1);
+    };
+    var SortFns = [countAscending, countDescending, nameAscending, nameDescending];
+	Cnds.prototype.ForEachPattern = function (m)
+	{
+	    var l = [];
+	    for (var n in this.patterns)
+	        l.push([n, this.patterns[n]]);
+	    l.sort(SortFns[m]);
+        var current_frame = this.runtime.getCurrentEventStack();
+        var current_event = current_frame.current_event;
+		var solModifierAfterCnds = current_frame.isModifierAfterCnds();
+		var i, cnt=l.length;
+		for(i=0; i<cnt; i++)
+		{
+            if (solModifierAfterCnds)
+            {
+                this.runtime.pushCopySol(current_event.solModifiers);
+            }
+            this.exp_CurPatternName = l[i][0];
+            this.exp_LoopIndex = i;
+            current_event.retrigger();
+		    if (solModifierAfterCnds)
+		    {
+		        this.runtime.popSol(current_event.solModifiers);
+		    }
+		}
+        this.exp_CurPatternName = "";
+		return false;
+	};
+	function Acts() {};
+	pluginProto.acts = new Acts();
+    Acts.prototype.SetMode = function (m)
+	{
+	    this.mode = m;
+	    this.restartGenFlg = true;
+	};
+    Acts.prototype.SetPattern = function (pattern, count)
+	{
+	    if (pattern == "")
+	        return;
+        this.patterns[pattern] = count;
+        this.restartGenFlg = true;
+	};
+    Acts.prototype.RemovePattern = function (pattern)
+	{
+	    if (pattern in this.patterns)
+	        delete this.patterns[pattern];
+        this.restartGenFlg = true;
+	};
+    Acts.prototype.RemoveAllPatterns = function ()
+	{
+	    var pattern;
+	    for (pattern in this.patterns)
+	        delete this.patterns[pattern];
+	    this.restartGenFlg = true;
+	};
+    Acts.prototype.StartGenerator = function ()
+	{
+	    this.restartGenFlg = true;
+	};
+    Acts.prototype.Generate = function ()
+	{
+        this.exp_LastPattern = this.genPattern();
+	};
+    Acts.prototype.AddPattern = function (pattern, count)
+	{
+	    if (pattern == "")
+	        return;
+        if (!this.patterns.hasOwnProperty(pattern))
+            this.patterns[pattern] = 0;
+        this.patterns[pattern] += count;
+        if (this.restartGenFlg)
+            return;
+	    if (this.mode == 1) // random mode
+	        this.resetPatternsRank(this.shadowPatterns);
+	    else if ((this.mode == 0) || (this.mode == 2))  // shuffle mode
+	        this.addShadowPattern(pattern, count);
+	};
+    Acts.prototype.PutPatternBack = function (pattern, count)
+	{
+	    if (this.mode == 1) // random mode
+	        return;
+	    if (pattern == "")
+	        return;
+        if (!this.patterns.hasOwnProperty(pattern))
+            return;
+        if ((this.mode == 2) && this.restartGenFlg)
+            return;
+        if (!this.shadowPatterns.hasOwnProperty(pattern))
+            this.shadowPatterns[pattern] = 0;
+        this.addShadowPattern(pattern, count, this.patterns[pattern]);
+	};
+	Acts.prototype.JSONLoad = function (json_)
+	{
+		var o;
+		try {
+			o = JSON.parse(json_);
+		}
+		catch(e) { return; }
+		this.loadFromJSON(o);
+	};
+    Acts.prototype.SetRandomGenerator = function (random_gen_objs)
+	{
+        var randomGenObj = random_gen_objs.getFirstPicked();
+        if (randomGenObj.check_name == "RANDOM")
+            this.randomGenObj = randomGenObj;
+        else
+            alert ("[Pattern generator] This object is not a random generator object.");
+	};
+	function Exps() {};
+	pluginProto.exps = new Exps();
+	Exps.prototype.Pattern = function (ret)
+	{
+        this.exp_LastPattern = this.genPattern();
+		ret.set_string(this.exp_LastPattern);
+	};
+	Exps.prototype.TotalCount = function (ret, pattern)
+	{
+		ret.set_float(this.getPatternCount(pattern));
+	};
+	Exps.prototype.ManualPick = function (ret, pattern)
+	{
+		ret.set_string(this.genPattern(pattern));
+	};
+	Exps.prototype.LastPattern = function (ret)
+	{
+		ret.set_string(this.exp_LastPattern);
+	};
+	Exps.prototype.RemainCount = function (ret, pattern)
+	{
+		ret.set_float(this.getPatternCount(pattern, true));
+	};
+	Exps.prototype.AsJSON = function (ret)
+	{
+		ret.set_string(JSON.stringify(this.saveToJSON()));
+	};
+	Exps.prototype.CurPatternName = function (ret)
+	{
+		ret.set_string(this.exp_CurPatternName);
+	};
+	Exps.prototype.CurPatternTotalCount = function (ret)
+	{
+		ret.set_float(this.getPatternCount(this.exp_CurPatternName) );
+	};
+	Exps.prototype.CurPatternRemainCount = function (ret)
+	{
+		ret.set_float(this.getPatternCount(this.exp_CurPatternName, true) );
+	};
+	Exps.prototype.LoopIndex = function (ret)
+	{
+		ret.set_int(this.exp_LoopIndex );
+	};
+}());
+;
+;
+cr.plugins_.Rex_Random = function (runtime) {
+    this.runtime = runtime;
+};
+(function () {
+    var pluginProto = cr.plugins_.Rex_Random.prototype;
+    pluginProto.Type = function (plugin) {
+        this.plugin = plugin;
+        this.runtime = plugin.runtime;
+    };
+    var typeProto = pluginProto.Type.prototype;
+    typeProto.onCreate = function () {
+    };
+    pluginProto.Instance = function (type) {
+        this.type = type;
+        this.runtime = type.runtime;
+    };
+    var instanceProto = pluginProto.Instance.prototype;
+    instanceProto.onCreate = function () {
+        this.check_name = "RANDOM";
+        this.seed = null;
+        this.randGen = new MersenneTwister(this.seed);
+    };
+    instanceProto.random = function () {
+        return this.randGen.random();
+    };
+    instanceProto.saveToJSON = function () {
+        return {
+            "seed": this.seed,
+            "rand": this.randGen.saveToJSON()
+        };
+    };
+    instanceProto.loadFromJSON = function (o) {
+        this.seed = o["seed"];
+        this.randGen.loadFromJSON(o["rand"]);
+    };
+    function Cnds() { };
+    pluginProto.cnds = new Cnds();
+    function Acts() { };
+    pluginProto.acts = new Acts();
+    Acts.prototype.SetSeed = function (seed) {
+        this.seed = seed;
+        this.randGen = new MersenneTwister(this.seed);
+    };
+    function Exps() { };
+    pluginProto.exps = new Exps();
+    Exps.prototype.Seed = function (ret) {
+        ret.set_float(this.seed || 0);
+    };
+    Exps.prototype.random = function (ret) {
+        ret.set_float(this.random());
+    };
+    /*
+      I've wrapped Makoto Matsumoto and Takuji Nishimura's code in a namespace
+      so it's better encapsulated. Now you can have multiple random number generators
+      and they won't stomp all over eachother's state.
+      If you want to use this as a substitute for Math.random(), use the random()
+      method like so:
+      var m = new MersenneTwister();
+      var randomNumber = m.random();
+      You can also call the other genrand_{foo}() methods on the instance.
+      If you want to use a specific seed in order to get a repeatable random
+      sequence, pass an integer into the constructor:
+      var m = new MersenneTwister(123);
+      and that will always produce the same random sequence.
+      Sean McCullough (banksean@gmail.com)
+    */
+    /*
+       A C-program for MT19937, with initialization improved 2002/1/26.
+       Coded by Takuji Nishimura and Makoto Matsumoto.
+       Before using, initialize the state by using init_genrand(seed)
+       or init_by_array(init_key, key_length).
+       Copyright (C) 1997 - 2002, Makoto Matsumoto and Takuji Nishimura,
+       All rights reserved.
+       Redistribution and use in source and binary forms, with or without
+       modification, are permitted provided that the following conditions
+       are met:
+         1. Redistributions of source code must retain the above copyright
+            notice, this list of conditions and the following disclaimer.
+         2. Redistributions in binary form must reproduce the above copyright
+            notice, this list of conditions and the following disclaimer in the
+            documentation and/or other materials provided with the distribution.
+         3. The names of its contributors may not be used to endorse or promote
+            products derived from this software without specific prior written
+            permission.
+       THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+       "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+       LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+       A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+       CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+       EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+       PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+       PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+       LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+       NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+       SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+       Any feedback is very welcome.
+       http://www.math.sci.hiroshima-u.ac.jp/~m-mat/MT/emt.html
+       email: m-mat @ math.sci.hiroshima-u.ac.jp (remove space)
+    */
+    var MersenneTwister = function (seed) {
+        if (seed == undefined) {
+            seed = new Date().getTime();
+        }
+        /* Period parameters */
+        this.N = 624;
+        this.M = 397;
+        this.MATRIX_A = 0x9908b0df;   /* constant vector a */
+        this.UPPER_MASK = 0x80000000; /* most significant w-r bits */
+        this.LOWER_MASK = 0x7fffffff; /* least significant r bits */
+        this.mt = new Array(this.N); /* the array for the state vector */
+        this.mti = this.N + 1; /* mti==N+1 means mt[N] is not initialized */
+        this.init_genrand(seed);
+    }
+    /* initializes mt[N] with a seed */
+    MersenneTwister.prototype.init_genrand = function (s) {
+        this.mt[0] = s >>> 0;
+        for (this.mti = 1; this.mti < this.N; this.mti++) {
+            var s = this.mt[this.mti - 1] ^ (this.mt[this.mti - 1] >>> 30);
+            this.mt[this.mti] = (((((s & 0xffff0000) >>> 16) * 1812433253) << 16) + (s & 0x0000ffff) * 1812433253)
+                + this.mti;
+            /* See Knuth TAOCP Vol2. 3rd Ed. P.106 for multiplier. */
+            /* In the previous versions, MSBs of the seed affect   */
+            /* only MSBs of the array mt[].                        */
+            /* 2002/01/09 modified by Makoto Matsumoto             */
+            this.mt[this.mti] >>>= 0;
+            /* for >32 bit machines */
+        }
+    }
+    /* initialize by an array with array-length */
+    /* init_key is the array for initializing keys */
+    /* key_length is its length */
+    /* slight change for C++, 2004/2/26 */
+    MersenneTwister.prototype.init_by_array = function (init_key, key_length) {
+        var i, j, k;
+        this.init_genrand(19650218);
+        i = 1; j = 0;
+        k = (this.N > key_length ? this.N : key_length);
+        for (; k; k--) {
+            var s = this.mt[i - 1] ^ (this.mt[i - 1] >>> 30)
+            this.mt[i] = (this.mt[i] ^ (((((s & 0xffff0000) >>> 16) * 1664525) << 16) + ((s & 0x0000ffff) * 1664525)))
+                + init_key[j] + j; /* non linear */
+            this.mt[i] >>>= 0; /* for WORDSIZE > 32 machines */
+            i++; j++;
+            if (i >= this.N) { this.mt[0] = this.mt[this.N - 1]; i = 1; }
+            if (j >= key_length) j = 0;
+        }
+        for (k = this.N - 1; k; k--) {
+            var s = this.mt[i - 1] ^ (this.mt[i - 1] >>> 30);
+            this.mt[i] = (this.mt[i] ^ (((((s & 0xffff0000) >>> 16) * 1566083941) << 16) + (s & 0x0000ffff) * 1566083941))
+                - i; /* non linear */
+            this.mt[i] >>>= 0; /* for WORDSIZE > 32 machines */
+            i++;
+            if (i >= this.N) {
+                this.mt[0] = this.mt[this.N - 1]; i = 1;
+            }
+        }
+        this.mt[0] = 0x80000000; /* MSB is 1; assuring non-zero initial array */
+    }
+    /* generates a random number on [0,0xffffffff]-interval */
+    MersenneTwister.prototype.genrand_int32 = function () {
+        var y;
+        var mag01 = new Array(0x0, this.MATRIX_A);
+        /* mag01[x] = x * MATRIX_A  for x=0,1 */
+        if (this.mti >= this.N) { /* generate N words at one time */
+            var kk;
+            if (this.mti == this.N + 1)   /* if init_genrand() has not been called, */
+                this.init_genrand(5489); /* a default initial seed is used */
+            for (kk = 0; kk < this.N - this.M; kk++) {
+                y = (this.mt[kk] & this.UPPER_MASK) | (this.mt[kk + 1] & this.LOWER_MASK);
+                this.mt[kk] = this.mt[kk + this.M] ^ (y >>> 1) ^ mag01[y & 0x1];
+            }
+            for (; kk < this.N - 1; kk++) {
+                y = (this.mt[kk] & this.UPPER_MASK) | (this.mt[kk + 1] & this.LOWER_MASK);
+                this.mt[kk] = this.mt[kk + (this.M - this.N)] ^ (y >>> 1) ^ mag01[y & 0x1];
+            }
+            y = (this.mt[this.N - 1] & this.UPPER_MASK) | (this.mt[0] & this.LOWER_MASK);
+            this.mt[this.N - 1] = this.mt[this.M - 1] ^ (y >>> 1) ^ mag01[y & 0x1];
+            this.mti = 0;
+        }
+        y = this.mt[this.mti++];
+        /* Tempering */
+        y ^= (y >>> 11);
+        y ^= (y << 7) & 0x9d2c5680;
+        y ^= (y << 15) & 0xefc60000;
+        y ^= (y >>> 18);
+        return y >>> 0;
+    }
+    /* generates a random number on [0,0x7fffffff]-interval */
+    MersenneTwister.prototype.genrand_int31 = function () {
+        return (this.genrand_int32() >>> 1);
+    }
+    /* generates a random number on [0,1]-real-interval */
+    MersenneTwister.prototype.genrand_real1 = function () {
+        return this.genrand_int32() * (1.0 / 4294967295.0);
+        /* divided by 2^32-1 */
+    }
+    /* generates a random number on [0,1)-real-interval */
+    MersenneTwister.prototype.random = function () {
+        return this.genrand_int32() * (1.0 / 4294967296.0);
+        /* divided by 2^32 */
+    }
+    /* generates a random number on (0,1)-real-interval */
+    MersenneTwister.prototype.genrand_real3 = function () {
+        return (this.genrand_int32() + 0.5) * (1.0 / 4294967296.0);
+        /* divided by 2^32 */
+    }
+    /* generates a random number on [0,1) with 53-bit resolution*/
+    MersenneTwister.prototype.genrand_res53 = function () {
+        var a = this.genrand_int32() >>> 5, b = this.genrand_int32() >>> 6;
+        return (a * 67108864.0 + b) * (1.0 / 9007199254740992.0);
+    }
+    MersenneTwister.prototype.saveToJSON = function () {
+        return {
+            "mt": this.mt,
+            "mti": this.mti,
+        };
+    }
+    MersenneTwister.prototype.loadFromJSON = function (o) {
+        this.mt = o["mt"];
+        this.mti = o["mti"];
+    }
+    /* These real versions are due to Isaku Wada, 2002/01/09 added */
+}());
+;
+;
 cr.plugins_.Rex_SysExt = function(runtime)
 {
 	this.runtime = runtime;
@@ -31830,35 +32441,37 @@ cr.getObjectRefTable = function () { return [
 	cr.plugins_.AJAX,
 	cr.plugins_.Browser,
 	cr.plugins_.Function,
-	cr.plugins_.Rex_Comment,
-	cr.plugins_.Rex_canvas,
+	cr.plugins_.Rex_TimeAway,
+	cr.plugins_.rex_TouchWrap,
+	cr.plugins_.Rex_WaitEvent,
+	cr.plugins_.Sprite,
+	cr.plugins_.Rex_WebstorageExt,
+	cr.plugins_.Text,
+	cr.plugins_.WebStorage,
 	cr.plugins_.Rex_Container,
+	cr.plugins_.Rex_canvas,
+	cr.plugins_.Rex_Comment,
 	cr.plugins_.Rex_fnCallPkg,
-	cr.plugins_.Rex_GridCtrl,
 	cr.plugins_.Rex_Hash,
 	cr.plugins_.Rex_JSONBuider,
 	cr.plugins_.Rex_jsshell,
+	cr.plugins_.Rex_GridCtrl,
 	cr.plugins_.Rex_Nickname,
+	cr.plugins_.Rex_PatternGen,
+	cr.plugins_.Rex_Random,
 	cr.plugins_.Rex_SysExt,
 	cr.plugins_.Rex_taffydb,
-	cr.plugins_.Sprite,
-	cr.plugins_.Text,
-	cr.plugins_.WebStorage,
-	cr.plugins_.Rex_TimeAway,
 	cr.plugins_.rex_TagText,
-	cr.plugins_.Rex_WaitEvent,
-	cr.plugins_.Rex_WebstorageExt,
-	cr.plugins_.rex_TouchWrap,
 	cr.behaviors.scrollto,
 	cr.behaviors.Rex_boundary,
 	cr.behaviors.Sin,
-	cr.behaviors.Rex_Button2,
-	cr.behaviors.rex_lunarray_Tween_mod,
 	cr.behaviors.rex_Anchor_mod,
+	cr.behaviors.rex_lunarray_Tween_mod,
 	cr.behaviors.Rex_SpeedMoinitor,
 	cr.behaviors.Rex_Slowdown,
 	cr.behaviors.Rex_TouchArea2,
 	cr.behaviors.Rex_DragDrop2,
+	cr.behaviors.Rex_Button2,
 	cr.behaviors.Rex_bNickname,
 	cr.system_object.prototype.cnds.OnLayoutStart,
 	cr.system_object.prototype.acts.SetVar,
@@ -31868,10 +32481,16 @@ cr.getObjectRefTable = function () { return [
 	cr.system_object.prototype.exps.projectversion,
 	cr.behaviors.Rex_Button2.prototype.acts.GotoINACTIVE,
 	cr.plugins_.WebStorage.prototype.cnds.LocalStorageExists,
-	cr.plugins_.Rex_taffydb.prototype.acts.InsertJSON,
+	cr.plugins_.Rex_PatternGen.prototype.acts.JSONLoad,
 	cr.plugins_.WebStorage.prototype.exps.LocalValue,
-	cr.behaviors.Rex_Button2.prototype.acts.GotoACTIVE,
 	cr.system_object.prototype.cnds.Else,
+	cr.plugins_.Rex_PatternGen.prototype.acts.SetRandomGenerator,
+	cr.plugins_.Rex_PatternGen.prototype.acts.SetPattern,
+	cr.plugins_.Rex_PatternGen.prototype.acts.StartGenerator,
+	cr.plugins_.WebStorage.prototype.acts.StoreLocal,
+	cr.plugins_.Rex_PatternGen.prototype.exps.AsJSON,
+	cr.plugins_.Rex_taffydb.prototype.acts.InsertJSON,
+	cr.behaviors.Rex_Button2.prototype.acts.GotoACTIVE,
 	cr.plugins_.Rex_WaitEvent.prototype.acts.WaitEvent,
 	cr.plugins_.AJAX.prototype.acts.RequestFile,
 	cr.plugins_.AJAX.prototype.cnds.OnComplete,
@@ -31897,46 +32516,55 @@ cr.getObjectRefTable = function () { return [
 	cr.plugins_.Rex_Container.prototype.exps.LayerName,
 	cr.plugins_.Sprite.prototype.acts.SetScale,
 	cr.plugins_.Sprite.prototype.acts.SetInstanceVar,
+	cr.plugins_.Sprite.prototype.acts.SetAnimFrame,
 	cr.plugins_.Rex_Container.prototype.acts.AddInsts,
 	cr.plugins_.Sprite.prototype.acts.MoveToTop,
-	cr.behaviors.Rex_Button2.prototype.cnds.OnClick,
 	cr.system_object.prototype.cnds.Compare,
+	cr.plugins_.Rex_WebstorageExt.prototype.exps.LocalValue,
+	cr.plugins_.Sprite.prototype.acts.Destroy,
+	cr.behaviors.Rex_Button2.prototype.cnds.OnClick,
 	cr.behaviors.Rex_TouchArea2.prototype.exps.Distance,
 	cr.plugins_.Sprite.prototype.cnds.CompareInstanceVar,
 	cr.plugins_.Rex_fnCallPkg.prototype.acts.CallFunction,
-	cr.plugins_.WebStorage.prototype.acts.StoreLocal,
+	cr.behaviors.Rex_Button2.prototype.cnds.OnRollingIn,
+	cr.behaviors.Rex_Button2.prototype.cnds.OnRollingOut,
 	cr.plugins_.Rex_taffydb.prototype.exps.AllRowsAsJSON,
 	cr.system_object.prototype.acts.GoToLayoutByName,
 	cr.system_object.prototype.acts.GoToLayout,
-	cr.plugins_.Rex_WebstorageExt.prototype.exps.LocalValue,
+	cr.system_object.prototype.cnds.IsGroupActive,
+	cr.plugins_.Rex_taffydb.prototype.acts.SetRowID,
+	cr.plugins_.Rex_taffydb.prototype.exps.CurRowID,
+	cr.plugins_.Rex_taffydb.prototype.acts.SetValue,
+	cr.plugins_.Rex_taffydb.prototype.acts.Save,
+	cr.system_object.prototype.exps.layoutname,
+	cr.system_object.prototype.exps.max,
+	cr.system_object.prototype.exps.floor,
+	cr.plugins_.Rex_PatternGen.prototype.acts.Generate,
+	cr.plugins_.Rex_PatternGen.prototype.exps.LastPattern,
 	cr.system_object.prototype.cnds.Every,
 	cr.plugins_.Rex_TimeAway.prototype.exps.ElapsedTime,
 	cr.plugins_.Rex_TimeAway.prototype.acts.StartTimer,
 	cr.system_object.prototype.exps.min,
-	cr.system_object.prototype.exps.floor,
-	cr.behaviors.Rex_Button2.prototype.cnds.OnRollingIn,
-	cr.plugins_.Sprite.prototype.acts.SetAnimFrame,
-	cr.behaviors.Rex_Button2.prototype.cnds.OnRollingOut,
-	cr.system_object.prototype.cnds.IsGroupActive,
+	cr.plugins_.Sprite.prototype.acts.SetAnim,
 	cr.plugins_.Rex_jsshell.prototype.acts.SetFunctionName,
 	cr.plugins_.Rex_jsshell.prototype.acts.AddValue,
 	cr.plugins_.Rex_jsshell.prototype.acts.AddCallback,
 	cr.plugins_.Rex_jsshell.prototype.acts.InvokeFunction,
 	cr.plugins_.Rex_jsshell.prototype.cnds.OnCallback,
+	cr.plugins_.Rex_Hash.prototype.acts.CleanAll,
+	cr.plugins_.Rex_Hash.prototype.acts.InsertValue,
 	cr.plugins_.Text.prototype.acts.SetText,
+	cr.plugins_.Rex_Hash.prototype.exps.AtKeys,
+	cr.plugins_.Rex_jsshell.prototype.acts.AddJSON,
 	cr.plugins_.Rex_jsshell.prototype.exps.Param,
+	cr.plugins_.Text.prototype.acts.AppendText,
 	cr.plugins_.Rex_JSONBuider.prototype.acts.Clean,
 	cr.plugins_.Rex_JSONBuider.prototype.cnds.SetRoot,
 	cr.plugins_.Rex_JSONBuider.prototype.acts.AddValue,
-	cr.plugins_.Rex_jsshell.prototype.acts.AddJSON,
 	cr.plugins_.Rex_JSONBuider.prototype.exps.AsJSON,
 	cr.plugins_.Rex_Hash.prototype.acts.StringToHashTable,
-	cr.plugins_.Text.prototype.acts.AppendText,
 	cr.plugins_.Rex_Hash.prototype.exps.At,
 	cr.system_object.prototype.exps.newline,
-	cr.plugins_.Rex_Hash.prototype.acts.CleanAll,
-	cr.plugins_.Rex_Hash.prototype.acts.InsertValue,
-	cr.plugins_.Rex_Hash.prototype.exps.AtKeys,
 	cr.plugins_.Rex_JSONBuider.prototype.acts.AddBooleanValue,
 	cr.plugins_.Rex_Hash.prototype.exps.AsJSON,
 	cr.plugins_.Browser.prototype.acts.ExecJs,
@@ -31948,8 +32576,10 @@ cr.getObjectRefTable = function () { return [
 	cr.plugins_.Browser.prototype.cnds.OnBackButton,
 	cr.system_object.prototype.exps.time,
 	cr.plugins_.Browser.prototype.acts.Close,
+	cr.plugins_.rex_TouchWrap.prototype.cnds.OnTouchEnd,
 	cr.plugins_.Sprite.prototype.exps.AnimationFrame,
 	cr.plugins_.Sprite.prototype.exps.AnimationFrameCount,
+	cr.system_object.prototype.cnds.ForEach,
 	cr.plugins_.Sprite.prototype.exps.AnimationName,
 	cr.plugins_.Rex_taffydb.prototype.exps.QueriedRowsCount,
 	cr.system_object.prototype.acts.CreateObject,
@@ -31961,7 +32591,8 @@ cr.getObjectRefTable = function () { return [
 	cr.plugins_.Rex_fnCallPkg.prototype.acts.CleanFnQueue,
 	cr.plugins_.Rex_fnCallPkg.prototype.acts.PushToFnQueue2,
 	cr.plugins_.Rex_fnCallPkg.prototype.exps.FnQueuePkg,
-	cr.system_object.prototype.cnds.ForEach,
+	cr.plugins_.Sprite.prototype.acts.SetOpacity,
+	cr.plugins_.rex_TagText.prototype.acts.SetOpacity,
 	cr.plugins_.Sprite.prototype.exps.LayerName,
 	cr.plugins_.Sprite.prototype.exps.Y,
 	cr.plugins_.Sprite.prototype.acts.SetHeight,
@@ -31972,7 +32603,6 @@ cr.getObjectRefTable = function () { return [
 	cr.plugins_.Rex_GridCtrl.prototype.exps.OY,
 	cr.plugins_.Rex_GridCtrl.prototype.exps.BottomOY,
 	cr.plugins_.Sprite.prototype.acts.SetY,
-	cr.system_object.prototype.exps.max,
 	cr.behaviors.Rex_boundary.prototype.exps.TopBound,
 	cr.behaviors.Rex_boundary.prototype.exps.BottomBound,
 	cr.behaviors.Rex_TouchArea2.prototype.cnds.OnTouchStart,
