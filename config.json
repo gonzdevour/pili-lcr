@@ -22,10 +22,12 @@
 	}],
 	"plugins": [
 		{ "id": "cordova-plugin-camera", "version": null },
+		{ "id": "cordova-plugin-file", "version": null },
 		{ "id": "cordova-plugin-inappbrowser", "version": null },
 		{ "id": "cordova-plugin-media", "version": null },
 		{ "id": "cordova-plugin-vibration", "version": null },
-		{ "id": "cordova-plugin-whitelist", "version": null }
+		{ "id": "cordova-plugin-whitelist", "version": null },
+		{ "id": "cordova-plugin-wkwebview-engine", "version": null }
 	],
 	"android": {
 		"min": 21,
