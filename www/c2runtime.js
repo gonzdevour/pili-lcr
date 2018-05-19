@@ -32537,6 +32537,8 @@ cr.getObjectRefTable = function () { return [
 	cr.plugins_.rex_TouchWrap.prototype.cnds.OnTapGestureObject,
 	cr.system_object.prototype.acts.AddVar,
 	cr.plugins_.Rex_taffydb.prototype.exps.Index2QueriedRowContent,
+	cr.system_object.prototype.exps.ceil,
+	cr.system_object.prototype.exps.random,
 	cr.system_object.prototype.exps.layoutname,
 	cr.system_object.prototype.exps.max,
 	cr.plugins_.Rex_taffydb.prototype.exps.QueriedRowsAsJSON,
