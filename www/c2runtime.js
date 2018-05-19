@@ -32575,6 +32575,7 @@ cr.getObjectRefTable = function () { return [
 	cr.system_object.prototype.exps.newline,
 	cr.plugins_.Rex_JSONBuider.prototype.acts.AddBooleanValue,
 	cr.plugins_.Rex_Hash.prototype.exps.AsJSON,
+	cr.plugins_.Browser.prototype.cnds.IsOnline,
 	cr.plugins_.Browser.prototype.acts.ExecJs,
 	cr.plugins_.Rex_jsshell.prototype.acts.AddObject,
 	cr.system_object.prototype.acts.SnapshotCanvas,
