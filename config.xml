@@ -1,5 +1,5 @@
 ﻿<?xml version="1.0" encoding="UTF-8" ?>
-<widget id="com.iegoart.lcr" version="1.2.2" xmlns="http://www.w3.org/ns/widgets" xmlns:cdv="http://cordova.apache.org/ns/1.0">
+<widget id="com.iegoart.lcr" version="1.2.3" xmlns="http://www.w3.org/ns/widgets" xmlns:cdv="http://cordova.apache.org/ns/1.0">
 	<name>霹靂科幻特展</name>
 	<description>霹靂藝術科幻特展APP將先進的光碼技術與布袋戲科技藝術導覽結合。於展場中使用光碼互動技術，即可現場獲得導覽資訊與啟動展場互動遊戲。</description>
 	<author>playone</author>
