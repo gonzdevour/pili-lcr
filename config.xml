@@ -1,5 +1,5 @@
-﻿<?xml version="1.0" encoding="UTF-8" ?>
-<widget id="com.iegoart.lcr" version="1.2.3" xmlns="http://www.w3.org/ns/widgets" xmlns:cdv="http://cordova.apache.org/ns/1.0">
+<?xml version="1.0" encoding="UTF-8" ?>
+<widget id="com.iegoart.lcr" version="1.1.2" xmlns="http://www.w3.org/ns/widgets" xmlns:cdv="http://cordova.apache.org/ns/1.0">
 	<name>霹靂科幻特展</name>
 	<description>霹靂藝術科幻特展APP將先進的光碼技術與布袋戲科技藝術導覽結合。於展場中使用光碼互動技術，即可現場獲得導覽資訊與啟動展場互動遊戲。</description>
 	<author>playone</author>
@@ -36,6 +36,27 @@
 	<icon src="www/icons/50x50.png" width="50" height="50" />
 	<icon src="www/icons/100x100.png" width="100" height="100" />
 	
+<<<<<<< HEAD
+=======
+	<!-- Splashscreen Settings -->
+	<!-- iOS only -->
+	<platform name="ios">
+		<splash src="www/Default@2x~universal~anyany.png" />
+		<preference name="FadeSplashScreen" value="true"/>
+		<preference name="FadeSplashScreenDuration" value="500"/>
+		<preference name="ShowSplashScreenSpinner" value="false"/>
+	</platform>
+	<!-- Android only -->
+	<platform name="android">
+		<splash src="www/Splash-Android.png" />
+		<preference name="SplashMaintainAspectRatio" value="true" />
+		<preference name="SplashShowOnlyFirstTime" value="false" />
+	</platform>
+	<!-- Common -->
+	<preference name="AutoHideSplashScreen" value="true" />
+	<preference name="SplashScreenDelay" value="3000" />	
+	
+>>>>>>> d5a988991893d19de083e6d87a223221f195839d
 	<!-- Localization -->	
 	<config-file platform="ios" target="*-Info.plist" parent="CFBundleDevelopmentRegion">
 		<array>
@@ -93,6 +114,10 @@
 	<plugin name="cordova-plugin-pin-dialog" source="npm" />
 	<plugin name="phonegap-plugin-barcodescanner" source="npm" />
 	<plugin name="cordova-plugin-save-image" source="npm" />
+<<<<<<< HEAD
+=======
+	<plugin name="cordova-plugin-lcs" source="npm"/>
+>>>>>>> d5a988991893d19de083e6d87a223221f195839d
 
 	<engine name="ios" />
 	<engine name="android" />
