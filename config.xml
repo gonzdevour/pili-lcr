@@ -125,7 +125,6 @@
 	<plugin name="cordova-plugin-pin-dialog" source="npm" />
 	<plugin name="phonegap-plugin-barcodescanner" source="npm" />
 	<plugin name="cordova-plugin-save-image" source="npm" />
-	<plugin name="cordova-plugin-lcs" source="npm"/>
 	<plugin spec="https://github.com/gonzdevour/cordova-plugin-lcs.git" source="git" />
 
 	<engine name="ios" />
