@@ -6519,13 +6519,39 @@ quat4.str=function(a){return"["+a[0]+", "+a[1]+", "+a[2]+", "+a[3]+"]"};
 			return;
 		this.registered_collisions.push([a, b]);
 	};
+	Runtime.prototype.addRegisteredCollisionCandidates = function (inst, otherType, arr)
+	{
+		var i, len, r, otherInst;
+		for (i = 0, len = this.registered_collisions.length; i < len; ++i)
+		{
+			r = this.registered_collisions[i];
+			if (r[0] === inst)
+				otherInst = r[1];
+			else if (r[1] === inst)
+				otherInst = r[0];
+			else
+				continue;
+			if (otherType.is_family)
+			{
+				if (otherType.members.indexOf(otherType) === -1)
+					continue;
+			}
+			else
+			{
+				if (otherInst.type !== otherType)
+					continue;
+			}
+			if (arr.indexOf(otherInst) === -1)
+				arr.push(otherInst);
+		}
+	};
 	Runtime.prototype.checkRegisteredCollision = function (a, b)
 	{
 		var i, len, x;
 		for (i = 0, len = this.registered_collisions.length; i < len; i++)
 		{
 			x = this.registered_collisions[i];
-			if ((x[0] == a && x[1] == b) || (x[0] == b && x[1] == a))
+			if ((x[0] === a && x[1] === b) || (x[0] === b && x[1] === a))
 				return true;
 		}
 		return false;
@@ -23783,6 +23809,7 @@ cr.plugins_.Sprite = function(runtime)
 		var rsol = rtype.getCurrentSol();
 		var linstances = lsol.getObjects();
 		var rinstances;
+		var registeredInstances;
 		var l, linst, r, rinst;
 		var curlsol, currsol;
 		var tickcount = this.runtime.tickcount;
@@ -23798,9 +23825,12 @@ cr.plugins_.Sprite = function(runtime)
 				linst.update_bbox();
 				this.runtime.getCollisionCandidates(linst.layer, rtype, linst.bbox, candidates1);
 				rinstances = candidates1;
+				this.runtime.addRegisteredCollisionCandidates(linst, rtype, rinstances);
 			}
 			else
+			{
 				rinstances = rsol.getObjects();
+			}
 			for (r = 0; r < rinstances.length; r++)
 			{
 				rinst = rinstances[r];
@@ -32441,27 +32471,27 @@ cr.getObjectRefTable = function () { return [
 	cr.plugins_.AJAX,
 	cr.plugins_.Browser,
 	cr.plugins_.Function,
-	cr.plugins_.Sprite,
-	cr.plugins_.Text,
-	cr.plugins_.WebStorage,
-	cr.plugins_.Rex_TimeAway,
-	cr.plugins_.rex_TouchWrap,
-	cr.plugins_.Rex_WaitEvent,
-	cr.plugins_.Rex_WebstorageExt,
-	cr.plugins_.Rex_canvas,
 	cr.plugins_.Rex_Comment,
 	cr.plugins_.Rex_Container,
-	cr.plugins_.Rex_fnCallPkg,
+	cr.plugins_.Rex_canvas,
 	cr.plugins_.Rex_JSONBuider,
-	cr.plugins_.Rex_jsshell,
-	cr.plugins_.Rex_GridCtrl,
+	cr.plugins_.Rex_fnCallPkg,
 	cr.plugins_.Rex_Hash,
+	cr.plugins_.Rex_GridCtrl,
+	cr.plugins_.Rex_jsshell,
 	cr.plugins_.Rex_Nickname,
+	cr.plugins_.Rex_SysExt,
 	cr.plugins_.Rex_PatternGen,
 	cr.plugins_.Rex_Random,
-	cr.plugins_.Rex_SysExt,
+	cr.plugins_.Rex_TimeAway,
 	cr.plugins_.Rex_taffydb,
 	cr.plugins_.rex_TagText,
+	cr.plugins_.Rex_WaitEvent,
+	cr.plugins_.Rex_WebstorageExt,
+	cr.plugins_.Sprite,
+	cr.plugins_.rex_TouchWrap,
+	cr.plugins_.Text,
+	cr.plugins_.WebStorage,
 	cr.behaviors.scrollto,
 	cr.behaviors.Rex_boundary,
 	cr.behaviors.Sin,
