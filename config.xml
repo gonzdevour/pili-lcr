@@ -125,7 +125,7 @@
 	<plugin name="phonegap-plugin-barcodescanner" source="npm" />
 	<plugin name="cordova-plugin-save-image" source="npm" />
 	<plugin name="cordova-plugin-network-information" source="npm" />
-	<plugin spec="https://github.com/gonzdevour/cordova-plugin-lcsprev.git" source="git" />
+	<plugin spec="https://github.com/gonzdevour/cordova-plugin-lcs.git" source="git" />
 
 	<engine name="ios" />
 	<engine name="android" />
