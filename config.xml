@@ -129,6 +129,7 @@
 	<plugin name="cordova-plugin-save-image" source="npm" />
 	<plugin name="cordova-plugin-network-information" source="npm" />
 	<plugin name="cordova-plugin-screen-orientation" source="npm" />
+	<plugin name="cordova-custom-config" source="npm" />
 	<plugin spec="https://github.com/gonzdevour/cordova-plugin-lcs.git" source="git" />
 
 	<engine name="ios" />
