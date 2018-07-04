@@ -96,6 +96,12 @@
 		</array>
 	</config-file>
 	
+	<platform name="android">
+    <config-file target="AndroidManifest.xml" parent="/manifest">
+        <uses-permission android:name="android.permission.INTERNET"/>
+    </config-file>
+	</platform>
+	
 	<!-- Permission Description -->	
 	<edit-config target="NSCameraUsageDescription" file="*-Info.plist" mode="merge">
     <string>need camera access to take pictures</string>
