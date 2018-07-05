@@ -131,6 +131,10 @@
 	<preference name="deployment-target" value="9.0" />
 	<preference name="android-minSdkVersion" value="21" />
 	<preference name="phonegap-version" value="cli-7.1.0" />
+	
+	<!--Set whitelist-->
+	<allow-navigation href="*" />
+	<allow-intent href="*" />
 	<access origin="*" />
 
 	<engine name="ios" />
