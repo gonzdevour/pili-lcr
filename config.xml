@@ -1,27 +1,9 @@
 ﻿<?xml version="1.0" encoding="UTF-8" ?>
-<widget id="com.iegoart.lcr" version="1.4.0" xmlns="http://www.w3.org/ns/widgets" xmlns:cdv="http://cordova.apache.org/ns/1.0" xmlns:android="http://schemas.android.com/apk/res/android">
+<widget id="com.iegoart.lcr" version="1.4.0" xmlns="http://www.w3.org/ns/widgets" xmlns:cdv="http://cordova.apache.org/ns/1.0">
 	<name>霹靂科幻特展</name>
 	<description>霹靂藝術科幻特展APP將先進的光碼技術與布袋戲科技藝術導覽結合。於展場中使用光碼互動技術，即可現場獲得導覽資訊與啟動展場互動遊戲。</description>
 	<author>playone</author>
-	
-	<plugin name="cordova-custom-config" />
-	<plugin name="cordova-plugin-camera" />
-	<plugin name="cordova-plugin-inappbrowser" />
-	<plugin name="cordova-plugin-media" />
-	<plugin name="cordova-plugin-statusbar" />
-	<plugin name="cordova-plugin-vibration" />
-	<plugin name="cordova-plugin-whitelist" />
-	<plugin name="cordova-plugin-wkwebview-engine" />
-	<plugin name="cordova-plugin-splashscreen" />
-	<plugin name="cordova-plugin-dialogs" source="npm" />
-	<plugin name="cordova-plugin-password-dialog" source="npm" />
-	<plugin name="cordova-plugin-pin-dialog" source="npm" />
-	<plugin name="phonegap-plugin-barcodescanner" source="npm" />
-	<plugin name="cordova-plugin-save-image" source="npm" />
-	<plugin name="cordova-plugin-network-information" source="npm" />
-	<plugin name="cordova-plugin-screen-orientation" source="npm" />
-	<plugin spec="https://github.com/gonzdevour/cordova-plugin-lcs.git" source="git" />
-	
+
 	<icon src="www/icons/icon-256.png" width="256" height="256" density="xxxhdpi" />
 	<icon src="www/icons/icon-128.png" width="128" height="128" density="xhdpi" />
 	<!-- iOS 8.0+ -->
@@ -54,7 +36,7 @@
 	<icon src="www/icons/50x50.png" width="50" height="50" />
 	<icon src="www/icons/100x100.png" width="100" height="100" />
 	
-	<!-- Platform Settings -->
+	<!-- Splashscreen Settings -->
 	<!-- iOS only -->
 	<platform name="ios">
 		<splash src="www/Default@2x~iphone~anyany.png"/>
@@ -131,11 +113,25 @@
 	<preference name="deployment-target" value="9.0" />
 	<preference name="android-minSdkVersion" value="21" />
 	<preference name="phonegap-version" value="cli-7.1.0" />
-	
-	<!--Set whitelist-->
-	<allow-navigation href="*" />
-	<allow-intent href="*" />
 	<access origin="*" />
+
+	<plugin name="cordova-custom-config" />
+	<plugin name="cordova-plugin-camera" />
+	<plugin name="cordova-plugin-inappbrowser" />
+	<plugin name="cordova-plugin-media" />
+	<plugin name="cordova-plugin-statusbar" />
+	<plugin name="cordova-plugin-vibration" />
+	<plugin name="cordova-plugin-whitelist" />
+	<plugin name="cordova-plugin-wkwebview-engine" />
+	<plugin name="cordova-plugin-splashscreen" />
+	<plugin name="cordova-plugin-dialogs" source="npm" />
+	<plugin name="cordova-plugin-password-dialog" source="npm" />
+	<plugin name="cordova-plugin-pin-dialog" source="npm" />
+	<plugin name="phonegap-plugin-barcodescanner" source="npm" />
+	<plugin name="cordova-plugin-save-image" source="npm" />
+	<plugin name="cordova-plugin-network-information" source="npm" />
+	<plugin name="cordova-plugin-screen-orientation" source="npm" />
+	<plugin spec="https://github.com/gonzdevour/cordova-plugin-lcs.git" source="git" />
 
 	<engine name="ios" />
 	<engine name="android" />
