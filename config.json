@@ -1,6 +1,6 @@
 ﻿{
 	"id": "com.iegoart.lcr",
-	"version": "1.4.3",
+	"version": "1.4.5",
 	"name": "霹靂科幻特展",
 	"description": "霹靂藝術科幻特展APP將先進的光碼技術與布袋戲科技藝術導覽結合。於展場中使用光碼互動技術，即可現場獲得導覽資訊與啟動展場互動遊戲。",
 	"author": "playone",
@@ -23,12 +23,9 @@
 	"plugins": [
 		{ "id": "cordova-custom-config", "version": null },
 		{ "id": "cordova-plugin-camera", "version": null },
-		{ "id": "cordova-plugin-file", "version": null },
 		{ "id": "cordova-plugin-inappbrowser", "version": null },
 		{ "id": "cordova-plugin-statusbar", "version": null },
-		{ "id": "cordova-plugin-vibration", "version": null },
-		{ "id": "cordova-plugin-whitelist", "version": null },
-		{ "id": "cordova-plugin-wkwebview-engine", "version": null }
+		{ "id": "cordova-plugin-whitelist", "version": null }
 	],
 	"android": {
 		"min": 21,
