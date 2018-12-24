@@ -3735,9 +3735,13 @@ quat4.str=function(a){return"["+a[0]+", "+a[1]+", "+a[2]+", "+a[3]+"]"};
 					"powerPreference": "high-performance",
 					"failIfMajorPerformanceCaveat": true
 				};
-				this.gl = (this.canvas.getContext("webgl2", attribs) ||
-						   this.canvas.getContext("webgl", attribs) ||
-						   this.canvas.getContext("experimental-webgl", attribs));
+				if (!this.isAndroid)
+					this.gl = this.canvas.getContext("webgl2", attribs);
+				if (!this.gl)
+				{
+					this.gl = (this.canvas.getContext("webgl", attribs) ||
+							   this.canvas.getContext("experimental-webgl", attribs));
+				}
 			}
 		}
 		catch (e) {
@@ -3937,7 +3941,7 @@ quat4.str=function(a){return"["+a[0]+", "+a[1]+", "+a[2]+", "+a[3]+"]"};
 		var isfullscreen = (document["mozFullScreen"] || document["webkitIsFullScreen"] || !!document["msFullscreenElement"] || document["fullScreen"] || this.isNodeFullscreen) && !this.isCordova;
 		if (!isfullscreen && this.fullscreen_mode === 0 && !force)
 			return;			// ignore size events when not fullscreen and not using a fullscreen-in-browser mode
-		if (isfullscreen && this.fullscreen_scaling > 0)
+		if (isfullscreen)
 			mode = this.fullscreen_scaling;
 		var dpr = this.devicePixelRatio;
 		if (mode >= 4)
@@ -3991,7 +3995,7 @@ quat4.str=function(a){return"["+a[0]+", "+a[1]+", "+a[2]+", "+a[3]+"]"};
 				}
 			}
 		}
-		else if (this.isNWjs && this.isNodeFullscreen && this.fullscreen_mode_set === 0)
+		else if (isfullscreen && mode === 0)
 		{
 			offx = Math.floor((w - this.original_width) / 2);
 			offy = Math.floor((h - this.original_height) / 2);
@@ -6417,6 +6421,43 @@ quat4.str=function(a){return"["+a[0]+", "+a[1]+", "+a[2]+", "+a[3]+"]"};
 		}
 		inst.x = oldx;
 		inst.y = oldy;
+		inst.set_bbox_changed();
+		return false;
+	};
+	Runtime.prototype.pushOutSolidAxis = function(inst, xdir, ydir, dist)
+	{
+		dist = dist || 50;
+		var oldX = inst.x;
+		var oldY = inst.y;
+		var lastOverlapped = null;
+		var secondLastOverlapped = null;
+		var i, which, sign;
+		for (i = 0; i < dist; ++i)
+		{
+			for (which = 0; which < 2; ++which)
+			{
+				sign = which * 2 - 1;		// -1 or 1
+				inst.x = oldX + (xdir * i * sign);
+				inst.y = oldY + (ydir * i * sign);
+				inst.set_bbox_changed();
+				if (!this.testOverlap(inst, lastOverlapped))
+				{
+					lastOverlapped = this.testOverlapSolid(inst);
+					if (lastOverlapped)
+					{
+						secondLastOverlapped = lastOverlapped;
+					}
+					else
+					{
+						if (secondLastOverlapped)
+							this.pushInFractional(inst, xdir * sign, ydir * sign, secondLastOverlapped, 16);
+						return true;
+					}
+				}
+			}
+		}
+		inst.x = oldX;
+		inst.y = oldY;
 		inst.set_bbox_changed();
 		return false;
 	};
@@ -15046,14 +15087,13 @@ cr.system_object.prototype.loadFromJSON = function (o)
 		if (prevsol.select_all)
 		{
 			clonesol.select_all = true;
-			cr.clearArray(clonesol.else_instances);
 		}
 		else
 		{
 			clonesol.select_all = false;
 			cr.shallowAssignArray(clonesol.instances, prevsol.instances);
-			cr.shallowAssignArray(clonesol.else_instances, prevsol.else_instances);
 		}
+		cr.clearArray(clonesol.else_instances);
 	};
 	cr.type_popSol = function ()
 	{
@@ -15510,7 +15550,7 @@ cr.plugins_.Browser = function(runtime)
 	var browserPluginReady = false;
 	document.addEventListener("DOMContentLoaded", function ()
 	{
-		if (window["C2_RegisterSW"] && navigator.serviceWorker)
+		if (window["C2_RegisterSW"] && navigator["serviceWorker"])
 		{
 			var offlineClientScript = document.createElement("script");
 			offlineClientScript.onload = function ()
@@ -15558,16 +15598,6 @@ cr.plugins_.Browser = function(runtime)
 			});
 			window.addEventListener("offline", function() {
 				self.runtime.trigger(cr.plugins_.Browser.prototype.cnds.OnOffline, self);
-			});
-		}
-		if (typeof window.applicationCache !== "undefined")
-		{
-			window.applicationCache.addEventListener('updateready', function() {
-				self.runtime.loadingprogress = 1;
-				self.runtime.trigger(cr.plugins_.Browser.prototype.cnds.OnUpdateReady, self);
-			});
-			window.applicationCache.addEventListener('progress', function(e) {
-				self.runtime.loadingprogress = (e["loaded"] / e["total"]) || 0;
 			});
 		}
 		if (!this.runtime.isDirectCanvas)
@@ -15633,7 +15663,7 @@ cr.plugins_.Browser = function(runtime)
 	};
 	instanceProto.onSWMessage = function (e)
 	{
-		var messageType = e.data.type;
+		var messageType = e["data"]["type"];
 		if (messageType === "downloading-update")
 			this.runtime.trigger(cr.plugins_.Browser.prototype.cnds.OnUpdateFound, this);
 		else if (messageType === "update-ready" || messageType === "update-pending")
@@ -15681,10 +15711,7 @@ cr.plugins_.Browser = function(runtime)
 	};
 	Cnds.prototype.IsDownloadingUpdate = function ()
 	{
-		if (typeof window["applicationCache"] === "undefined")
-			return false;
-		else
-			return window["applicationCache"]["status"] === window["applicationCache"]["DOWNLOADING"];
+		return false;		// deprecated
 	};
 	Cnds.prototype.OnUpdateReady = function ()
 	{
@@ -16862,6 +16889,916 @@ cr.plugins_.NinePatch = function(runtime)
 }());
 ;
 ;
+cr.plugins_.Rex_CSV = function(runtime)
+{
+	this.runtime = runtime;
+};
+(function ()
+{
+	var pluginProto = cr.plugins_.Rex_CSV.prototype;
+	pluginProto.Type = function(plugin)
+	{
+		this.plugin = plugin;
+		this.runtime = plugin.runtime;
+	};
+	var typeProto = pluginProto.Type.prototype;
+	typeProto.onCreate = function()
+	{
+	};
+	pluginProto.Instance = function(type)
+	{
+		this.type = type;
+		this.runtime = type.runtime;
+	};
+	var instanceProto = pluginProto.Instance.prototype;
+	instanceProto.onCreate = function()
+	{
+	    this.isInPreview = (typeof cr_is_preview !== "undefined");
+        this.strDelimiter = this.properties[0];
+        this.isEvalMode = (this.properties[1] == 1);
+        this.tables = {};
+        this.currentPageName = null;
+        this.currentTable = null;
+        this.forPage = "";
+        this.atCol = "";
+        this.atRow = "";
+        this.atPage = "";
+        this.TurnPage("_");
+        this.checkName = "CSV";
+	};
+	instanceProto.getValue = function(v)
+	{
+	    if (v == null)
+	        v = 0;
+	    else if (this.isEvalMode)
+	        v = eval("("+v+")");
+        return v;
+	};
+	instanceProto.HasPage = function(page)
+	{
+	    return (this.tables[page] != null);
+	};
+	instanceProto.TurnPage = function(page)
+	{
+        if (this.currentPageName === page)
+            return;
+        if (!this.HasPage(page))
+        {
+            this.tables[page] = new cr.plugins_.Rex_CSV.CSVKlass(this);
+        }
+        this.currentPageName = page;
+        this.currentTable = this.tables[page];
+	};
+	instanceProto.Get = function (col, row, page)
+	{
+        this.atCol = col;
+        this.atRow = row;
+        if (page != null)
+        {
+            this.TurnPage(page);
+        }
+        this.atPage = this.currentPageName;
+        return this.currentTable.At(col,row);
+	};
+	instanceProto.Set = function (value, col, row, page)
+	{
+        this.atCol = col;
+        this.atRow = row;
+        if (page != null)
+        {
+            this.TurnPage(page);
+        }
+        this.atPage = this.currentPageName;
+        this.currentTable.SetCell(col, row, value);
+	};
+	instanceProto.GetColCnt = function (page)
+	{
+        if (page != null)
+        {
+            this.TurnPage(page);
+        }
+        this.atPage = this.currentPageName;
+        return this.currentTable.GetColCnt();
+	};
+	instanceProto.GetRowCnt = function (page)
+	{
+        if (page != null)
+        {
+            this.TurnPage(page);
+        }
+        this.atPage = this.currentPageName;
+        return this.currentTable.GetRowCnt();
+	};
+	instanceProto.TableToString = function (page)
+	{
+        if (page != null)
+        {
+            this.TurnPage(page);
+        }
+        return this.currentTable.ToString();
+	};
+	instanceProto.saveToJSON = function ()
+	{
+	    var page, tables={};
+	    for (page in this.tables)
+        {
+            this.TurnPage(page);
+	        tables[page] = {"d":this.currentTable.table,
+			                "k":this.currentTable.keys,
+							"i":this.currentTable.items}
+		}
+		return { "d": tables,
+                      "delimiter": this.strDelimiter,
+                   };
+	};
+	instanceProto.loadFromJSON = function (o)
+	{
+	    var tables = o["d"], table;
+		var page;
+		for (page in tables)
+		{
+		    this.TurnPage(page);
+		    table = tables[page];
+			this.currentTable.table = table["d"];
+			this.currentTable.keys = table["k"];
+			this.currentTable.items = table["i"];
+		}
+        this.strDelimiter = o["delimiter"];
+	};
+	function Cnds() {};
+	pluginProto.cnds = new Cnds();
+	Cnds.prototype.ForEachCol = function ()
+	{
+        this.currentTable.ForEachCol();
+		return false;
+	};
+	Cnds.prototype.ForEachRowInCol = function (col)
+	{
+        this.currentTable.ForEachRowInCol(col);
+		return false;
+	};
+	Cnds.prototype.ForEachPage = function ()
+	{
+        var current_frame = this.runtime.getCurrentEventStack();
+        var current_event = current_frame.current_event;
+		var solModifierAfterCnds = current_frame.isModifierAfterCnds();
+		this.forPage = "";
+        var tables = this.tables;
+        var page;
+		for (page in tables)
+	    {
+		    if (solModifierAfterCnds)
+                this.runtime.pushCopySol(current_event.solModifiers);
+            this.forPage = page;
+            this.TurnPage(page);
+		    current_event.retrigger();
+            if (solModifierAfterCnds)
+		        this.runtime.popSol(current_event.solModifiers);
+		}
+		this.forPage = "";
+		return false;
+	};
+	Cnds.prototype.ForEachRow = function ()
+	{
+        this.currentTable.ForEachRow();
+		return false;
+	};
+	Cnds.prototype.ForEachColInRow = function (row)
+	{
+        this.currentTable.ForEachColInRow(row);
+		return false;
+	};
+	Cnds.prototype.IsDataInCol = function (data, col_name)
+	{
+		if (!(this.currentTable.keys.indexOf(col_name) != (-1)))
+		    return false;
+	    var table = this.currentTable.table;
+	    var col_data = table[col_name], row_name;
+		var matched = false;
+		for (row_name in col_data)
+		{
+		    if (col_data[row_name] == data)
+			{
+			    matched = true;
+				break;
+			}
+		}
+		return matched;
+	};
+	Cnds.prototype.IsDataInRow = function (data, row_name)
+	{
+		if (!(this.currentTable.items.indexOf(row_name) != (-1)))
+		    return false;
+	    var table = this.currentTable.table;
+	    var col_name;
+		var matched = false;
+		for (col_name in table)
+		{
+		    if (table[col_name][row_name] == data)
+			{
+			    matched = true;
+				break;
+			}
+		}
+		return matched;
+	};
+	Cnds.prototype.IsKeyInCol = function (key)
+	{
+        return (this.currentTable.keys.indexOf(key) != (-1));
+	};
+	Cnds.prototype.IsKeyInRow = function (key)
+	{
+        return (this.currentTable.items.indexOf(key) != (-1));
+	};
+	Cnds.prototype.IsCellValid = function (col, row)
+	{
+        return ((this.currentTable.keys.indexOf(col) != (-1)) &&
+                (this.currentTable.items.indexOf(row) != (-1))   );
+	};
+	Cnds.prototype.HasCol = function (col)
+	{
+        return (this.currentTable.keys.indexOf(col) != (-1));
+	};
+	Cnds.prototype.HasRow = function (row)
+	{
+        return (this.currentTable.items.indexOf(row) != (-1));
+	};
+	function Acts() {};
+	pluginProto.acts = new Acts();
+	Acts.prototype.LoadCSV = function (csv_string)
+	{
+        this.currentTable._parsing(csv_string);
+	};
+	Acts.prototype.SetCell = function (col, row, val)
+	{
+        this.currentTable.SetCell(col, row, val);
+	};
+	Acts.prototype.Clear = function ()
+	{
+		 this.currentTable.Clear();
+	};
+	Acts.prototype.ConvertRow = function (row, to_type)
+	{
+         this.currentTable.ConvertRow(row, to_type);
+	};
+	Acts.prototype.TurnPage = function (page)
+	{
+         this.TurnPage(page);
+	};
+	Acts.prototype.StringToPage = function (JSON_string)
+	{
+        this.currentTable.JSONString2Page(JSON_string);
+	};
+	Acts.prototype.StringToPage = function (JSON_string)
+	{
+        this.currentTable.JSONString2Page(JSON_string);
+	};
+	Acts.prototype.AppendCol = function (col, init_value)
+	{
+        this.currentTable.AppendCol(col, init_value);
+	};
+	Acts.prototype.AppendRow = function (row, init_value)
+	{
+        this.currentTable.AppendRow(row, init_value);
+	};
+	Acts.prototype.RemoveCol = function (col)
+	{
+        if (typeof (col) === "number")
+        {
+            var cols = this.currentTable.keys;
+            col = cols[col];
+        }
+        this.currentTable.RemoveCol(col);
+	};
+	Acts.prototype.RemoveRow = function (row)
+	{
+        if (typeof (row) === "number")
+        {
+            var rows = this.currentTable.items;
+            row = rows[row];
+        }
+        this.currentTable.RemoveRow(row);
+	};
+	Acts.prototype.SetDelimiter = function (s)
+	{
+        this.strDelimiter = s;
+	};
+	Acts.prototype.StringToAllTables = function (JSON_string)
+	{
+	    var page;
+	    var tables=JSON.parse(JSON_string);
+	    for (page in tables)
+	    {
+	        this.TurnPage(page);
+	        this.currentTable.JSONString2Page(tables[page]);
+	    }
+	};
+	Acts.prototype.SortCol = function (col, is_increasing)
+	{
+        this.currentTable.SortCol(col, is_increasing);
+	};
+	Acts.prototype.SortRow = function (row, is_increasing)
+	{
+        this.currentTable.SortRow(row, is_increasing);
+	};
+	Acts.prototype.SetCellAtPage = function (col, row, page, val)
+	{
+        this.TurnPage(page);
+        this.currentTable.SetCell(col, row, val);
+	};
+	Acts.prototype.AddToCell = function (col, row, val)
+	{
+        var value = this.Get(col, row) || 0;
+        this.currentTable.SetCell(col, row, value + val);
+	};
+	Acts.prototype.AddToCellAtPage = function (col, row, page, val)
+	{
+        var value = this.Get(col, row, page) || 0;
+        this.TurnPage(page);
+        this.currentTable.SetCell(col, row, value + val);
+	};
+	Acts.prototype.ConvertCol = function (col, to_type)
+	{
+         this.currentTable.ConvertCol(col, to_type);
+	};
+	function Exps() {};
+	pluginProto.exps = new Exps();
+	Exps.prototype.At = function (ret, col, row, page, default_value)
+	{
+        if (page != null)
+            this.TurnPage(page);
+        if (typeof (col) === "number")
+        {
+            var cols = this.currentTable.keys;
+            col = cols[col];
+        }
+        if (typeof (row) === "number")
+        {
+            var rows = this.currentTable.items;
+            row = rows[row];
+        }
+        var value = this.Get(col, row, page);
+        if (value == null)
+            value = (default_value == null)? 0 : default_value;
+        ret.set_any(value);
+	};
+	Exps.prototype.CurCol = function (ret)
+	{
+		ret.set_string(this.currentTable.forCol);
+	};
+	Exps.prototype.CurRow = function (ret)
+	{
+		ret.set_string(this.currentTable.forRow);
+	};
+	Exps.prototype.CurValue = function (ret)
+	{
+		ret.set_any(this.currentTable.At( this.currentTable.forCol, this.currentTable.forRow ));
+	};
+	Exps.prototype.AtCol = function (ret)
+	{
+		ret.set_string(this.atCol);
+	};
+	Exps.prototype.AtRow = function (ret)
+	{
+		ret.set_string(this.atRow);
+	};
+	Exps.prototype.AtPage = function (ret)
+	{
+		ret.set_string(this.atPage);
+	};
+	Exps.prototype.CurPage = function (ret)
+	{
+		ret.set_string(this.forPage);
+	};
+	Exps.prototype.TableToString = function (ret, page)
+	{
+		ret.set_string(this.TableToString(page));
+	};
+	Exps.prototype.ColCnt = function (ret, page)
+	{
+		ret.set_int(this.GetColCnt(page));
+	};
+	Exps.prototype.RowCnt = function (ret, page)
+	{
+		ret.set_int(this.GetRowCnt(page));
+	};
+	Exps.prototype.Delimiter = function (ret)
+	{
+		ret.set_string(this.strDelimiter);
+	};
+	Exps.prototype.AllTalbesToString = function (ret)
+	{
+	    var page, table2string={};
+	    for (page in this.tables)
+	        table2string[page] = this.TableToString(page);
+		ret.set_string(JSON.stringify(table2string));
+	};
+	Exps.prototype.TableToCSV = function (ret)
+	{
+		ret.set_string(this.currentTable.ToCSVString());
+	};
+	Exps.prototype.NextCol = function (ret, col)
+	{
+        if (col == null)
+            col = this.atCol;
+        var cols = this.currentTable.keys;
+        var idx = cols.indexOf(col);
+        var next_col;
+        if (idx !== -1)
+            next_col = cols[idx+1];
+		ret.set_string(next_col || "");
+	};
+	Exps.prototype.PreviousCol = function (ret, col)
+	{
+        if (col == null)
+            col = this.atCol;
+        var cols = this.currentTable.keys;
+        var idx = cols.indexOf(col);
+        var next_col;
+        if (idx !== -1)
+            next_col = cols[idx-1];
+		ret.set_string(next_col || "");
+	};
+	Exps.prototype.NextRow = function (ret, row)
+	{
+        if (row == null)
+            row = this.atRow;
+        var rows = this.currentTable.items;
+        var idx = rows.indexOf(row);
+        var next_row;
+        if (idx !== -1)
+            next_row = rows[idx+1];
+		ret.set_string(next_row || "");
+	};
+	Exps.prototype.PreviousRow = function (ret, row)
+	{
+        if (row == null)
+            row = this.atRow;
+        var rows = this.currentTable.items;
+        var idx = rows.indexOf(row);
+        var next_row;
+        if (idx !== -1)
+            next_row = rows[idx-1];
+		ret.set_string(next_row || "");
+	};
+}());
+(function ()
+{
+    cr.plugins_.Rex_CSV.CSVKlass = function(plugin)
+    {
+        this.plugin = plugin;
+		this.table = {};
+        this.keys = [];    // col name
+        this.items = [];   // row name
+        this.forCol = "";
+        this.forRow = "";
+    };
+    var CSVKlassProto = cr.plugins_.Rex_CSV.CSVKlass.prototype;
+	CSVKlassProto.Clear = function()
+	{
+        var key;
+        for (key in this.table)
+            delete this.table[key];
+        this.keys.length = 0;
+        this.items.length = 0;
+	};
+	CSVKlassProto.ToString = function()
+	{
+        var save_data = {"table":this.table,
+                         "keys":this.keys,
+                         "items":this.items};
+		return JSON.stringify(save_data);
+	};
+	CSVKlassProto.JSONString2Page = function(JSON_string)
+	{
+        var save_data = JSON.parse(JSON_string);
+        try
+        {
+	        this.table = save_data["table"];
+            this.keys = save_data["keys"];
+            this.items = save_data["items"];
+        }
+        catch(err)  // compatible with older version
+        {
+            this.table = save_data;
+        }
+	};
+    CSVKlassProto._create_keys = function()
+	{
+        var keys = this.keys;
+        var key_cnt = this.keys.length;
+        var i, key;
+        for (i=0; i<key_cnt; i++)
+        {
+            key = keys[i];
+            if (this.table[key] == null)
+                this.table[key] = {};
+        }
+	};
+    CSVKlassProto._create_items = function(values)
+	{
+        var item_name = values.shift();
+        var keys = this.keys;
+        var key_cnt = this.keys.length;
+        var table = this.table;
+        var i, v;
+        for (i=0; i<key_cnt; i++)
+        {
+            v = this.plugin.getValue(values[i]);
+            table[keys[i]][item_name] = v;
+        }
+        this.items.push(item_name);
+	};
+	CSVKlassProto._parsing = function(csv_string)
+	{
+        if (csv_string == "")
+            return;
+        var read_array = CSVToArray(csv_string, this.plugin.strDelimiter);
+        this.keys = read_array.shift();
+        this._create_keys();
+        var item_cnt = read_array.length;
+        var i;
+        for (i=0; i<item_cnt; i++)
+        {
+            this._create_items(read_array[i]);
+        }
+	};
+    CSVKlassProto.At = function(col, row)
+	{
+	    var cell;
+	    cell = this.table[col];
+	    if (cell == null)
+        {
+;
+	        return null;
+        }
+	    cell = cell[row];
+	    if (cell == null)
+        {
+;
+	        return null;
+        }
+        return cell;
+	};
+	CSVKlassProto.SetCell = function (col, row, val)
+	{
+	    var cell;
+	    cell = this.table[col];
+	    if (cell == null)
+        {
+;
+	        return;
+        }
+	    cell = cell[row];
+	    if (cell == null)
+        {
+;
+	        return;
+        }
+        this.table[col][row] = val;
+	};
+	CSVKlassProto.ConvertCol = function (col, to_type)
+	{
+        var handler = (to_type==0)? parseInt:
+                                    parseFloat;
+        var items = this.items;
+        var item_cnt = items.length;
+        var table = this.table;
+        var i, val;
+        for (i=0; i<item_cnt; i++)
+        {
+            val = table[col][items[i]];
+            table[col][items[i]] = handler(val);
+        }
+	};
+	CSVKlassProto.ConvertRow = function (row, to_type)
+	{
+        var handler = (to_type==0)? parseInt:
+                                    parseFloat;
+        var keys = this.keys;
+        var key_cnt = keys.length;
+        var table = this.table;
+        var i, val;
+        for (i=0; i<key_cnt; i++)
+        {
+            val = table[keys[i]][row];
+            table[keys[i]][row] = handler(val);
+        }
+	};
+	CSVKlassProto.AppendCol = function (col, init_value)
+	{
+        if (this.keys.indexOf(col) != (-1))
+            return;
+        var has_ref = false;
+        if (this.keys.length > 0)
+        {
+            var ref_col = this.table[this.keys[0]];
+            has_ref = true;
+        }
+        var col_data = {};
+        var items = this.items;
+        var item_cnt = items.length;
+        var i;
+        for (i=0; i<item_cnt; i++)
+        {
+            if (has_ref)
+            {
+                if (typeof ref_col[items[i]] == "number")
+                    col_data[items[i]] = 0;
+                else
+                     col_data[items[i]] = "";
+            }
+            else
+                col_data[items[i]] = init_value;
+        }
+        this.table[col] = col_data;
+        this.keys.push(col);
+	};
+	CSVKlassProto.AppendRow = function (row, init_value)
+	{
+        if (this.items.indexOf(row) != (-1))
+            return;
+        var keys = this.keys;
+        var key_cnt = keys.length;
+        var table = this.table;
+        var i;
+        for (i=0; i<key_cnt; i++)
+        {
+            table[keys[i]][row] = init_value;
+        }
+        this.items.push(row);
+	};
+	CSVKlassProto.RemoveCol = function (col)
+	{
+        var col_index = this.keys.indexOf(col);
+        if (col_index == (-1))
+            return;
+        delete this.table[col];
+        this.keys.splice(col_index, 1);
+	};
+	CSVKlassProto.RemoveRow = function (row)
+	{
+        var row_index = this.items.indexOf(row);
+        if (row_index == (-1))
+            return;
+        var keys = this.keys;
+        var key_cnt = keys.length;
+        var table = this.table;
+        var i;
+        for (i=0; i<key_cnt; i++)
+        {
+            delete table[keys[i]][row];
+        }
+        this.items.splice(row_index, 1);
+	};
+	CSVKlassProto.ForEachCol = function ()
+	{
+        var current_frame = this.plugin.runtime.getCurrentEventStack();
+        var current_event = current_frame.current_event;
+		var solModifierAfterCnds = current_frame.isModifierAfterCnds();
+		this.forCol = "";
+        var keys = this.keys;
+        var key_cnt = keys.length;
+        var i;
+		for (i=0; i<key_cnt; i++ )
+	    {
+            if (solModifierAfterCnds)
+		        this.plugin.runtime.pushCopySol(current_event.solModifiers);
+            this.forCol = keys[i];
+		    current_event.retrigger();
+            if (solModifierAfterCnds)
+		    	this.plugin.runtime.popSol(current_event.solModifiers);
+		}
+		this.forCol = "";
+	};
+	CSVKlassProto.ForEachRowInCol = function (col)
+	{
+        var has_col_index = (this.keys.indexOf(col)!=(-1));
+        if (!has_col_index)
+        {
+;
+            return;
+        }
+        this.forCol = col;
+        var current_frame = this.plugin.runtime.getCurrentEventStack();
+        var current_event = current_frame.current_event;
+		var solModifierAfterCnds = current_frame.isModifierAfterCnds();
+		this.forRow = "";
+        var items = this.items;
+        var item_cnt = items.length;
+        var i;
+		for (i=0; i<item_cnt; i++ )
+	    {
+            if (solModifierAfterCnds)
+		        this.plugin.runtime.pushCopySol(current_event.solModifiers);
+            this.forRow = items[i];
+		    current_event.retrigger();
+            if (solModifierAfterCnds)
+		    	this.plugin.runtime.popSol(current_event.solModifiers);
+		}
+		this.forRow = "";
+	};
+	CSVKlassProto.ForEachRow = function ()
+	{
+        var current_frame = this.plugin.runtime.getCurrentEventStack();
+        var current_event = current_frame.current_event;
+		var solModifierAfterCnds = current_frame.isModifierAfterCnds();
+		this.forRow = "";
+        var items = this.items;
+        var item_cnt = items.length;
+        var i;
+		for (i=0; i<item_cnt; i++ )
+	    {
+            if (solModifierAfterCnds)
+		        this.plugin.runtime.pushCopySol(current_event.solModifiers);
+            this.forRow = items[i];
+		    current_event.retrigger();
+            if (solModifierAfterCnds)
+		    	this.plugin.runtime.popSol(current_event.solModifiers);
+	   }
+		this.forRow = "";
+	};
+	CSVKlassProto.ForEachColInRow = function (row)
+	{
+        var has_row_index = (this.items.indexOf(row)!=(-1));
+        if (!has_row_index)
+        {
+;
+            return;
+        }
+        this.forRow = row;
+        var current_frame = this.plugin.runtime.getCurrentEventStack();
+        var current_event = current_frame.current_event;
+		var solModifierAfterCnds = current_frame.isModifierAfterCnds();
+		this.forCol = "";
+        var keys = this.keys;
+        var key_cnt = keys.length;
+        var i;
+		for (i=0; i<key_cnt; i++ )
+	    {
+            if (solModifierAfterCnds)
+		        this.plugin.runtime.pushCopySol(current_event.solModifiers);
+		    this.forCol = keys[i];
+		    current_event.retrigger();
+            if (solModifierAfterCnds)
+		    	this.plugin.runtime.popSol(current_event.solModifiers);
+		}
+		this.forCol = "";
+	};
+    CSVKlassProto.GetColCnt = function()
+    {
+        return this.keys.length;
+    };
+    CSVKlassProto.GetRowCnt = function()
+    {
+        return this.items.length;
+    };
+    var _row_sort = function(col0, col1)
+    {
+        var item0 = _sort_table[col0][_sort_row_name];
+        var item1 = _sort_table[col1][_sort_row_name];
+        return (item0 > item1) ? (_sort_is_increasing? 1:-1):
+               (item0 < item1) ? (_sort_is_increasing? -1:1):
+                                 0;
+    };
+    CSVKlassProto.SortCol = function (col, sortMode_)  // 0=a, 1=d, 2=la, 3=ld
+    {
+        var has_col_index = (this.keys.indexOf(col)!=(-1));
+        if (!has_col_index)
+        {
+;
+            return;
+        }
+        var self=this;
+        var sortFn = function (row0, row1)
+        {
+            var sortMode = sortMode_;
+            var v0 =  self.table[col][row0];
+            var v1 =  self.table[col][row1];
+            if (sortMode > 1)  // 2=la, 3=ld
+            {
+                v0 = parseFloat(v0);
+                v1 = parseFloat(v1);
+                sortMode -= 2;
+            }
+            return (v0 > v1) ? (sortMode? -1:1):
+                       (v0 < v1) ? (sortMode? 1:-1):
+                                         0;
+        }
+        this.items.sort(sortFn);
+    };
+    CSVKlassProto.SortRow = function (row, sortMode_)
+    {
+        var has_row_index = (this.items.indexOf(row)!=(-1));
+        if (!has_row_index)
+        {
+;
+            return;
+        }
+        var self=this;
+        var sortFn = function (col0, col1)
+        {
+            var sortMode = sortMode_;
+            var v0 = self.table[col0][row];
+            var v1 = self.table[col1][row];
+            if (sortMode > 1)  // 2=la, 3=ld
+            {
+                v0 = parseFloat(v0);
+                v1 = parseFloat(v1);
+                sortMode -= 2;
+            }
+            return (v0 > v1) ? (sortMode? -1:1):
+                   (v0 < v1) ? (sortMode? 1:-1):
+                                         0;
+        }
+        this.keys.sort(sortFn);
+    };
+    var dump_lines = [];
+    CSVKlassProto.ToCSVString = function ()
+    {
+        var strDelimiter = this.plugin.strDelimiter;
+        var isEvalMode = this.plugin.isEvalMode;
+        var l = "";
+        var k, kcnt = this.keys.length;
+        for (k=0; k<kcnt; k++)
+        {
+            l += (strDelimiter + cell_string_get(this.keys[k], false, strDelimiter));
+        }
+        dump_lines.push(l);
+        var i, icnt = this.items.length;
+        for (i=0; i<icnt; i++)
+        {
+            l = cell_string_get(this.items[i], false, strDelimiter);
+            for (k=0; k<kcnt; k++)
+            {
+                l += (strDelimiter + cell_string_get(this.table[this.keys[k]][this.items[i]], isEvalMode, strDelimiter));
+            }
+            dump_lines.push(l);
+        }
+        var csvString = dump_lines.join("\n");
+        dump_lines.length = 0;
+        return csvString;
+    };
+    var cell_string_get = function (value_, isEvalMode, strDelimiter)
+    {
+        if (typeof(value_) == "number")
+            value_ = value_.toString();
+        else
+        {
+            if (isEvalMode)
+                value_ = '"' + value_ + '"';
+            if (strDelimiter == null)
+                strDelimiter = ",";
+            var need_add_quotes = (value_.indexOf(strDelimiter) != (-1)) ||
+                                  (value_.indexOf("\n") != (-1));
+            if (value_.indexOf('"') != (-1))
+            {
+                var re = new RegExp('"', 'g');
+                value_ = value_.replace(re, '""');
+                need_add_quotes = true;
+            }
+            if ( need_add_quotes)
+            {
+                value_ = '"' + value_ + '"';
+            }
+        }
+        return value_;
+    };
+    var CSVToArray = function ( strData, strDelimiter ){
+        strDelimiter = (strDelimiter || ",");
+        var objPattern = new RegExp(
+                (
+                        "(\\" + strDelimiter + "|\\r?\\n|\\r|^)" +
+                        "(?:\"([^\"]*(?:\"\"[^\"]*)*)\"|" +
+                        "([^\"\\" + strDelimiter + "\\r\\n]*))"
+                ),
+                "gi"
+                );
+        var arrData = [[]];
+        var arrMatches = null;
+        while (arrMatches = objPattern.exec( strData )){
+                var strMatchedDelimiter = arrMatches[ 1 ];
+                if (
+                        strMatchedDelimiter.length &&
+                        (strMatchedDelimiter != strDelimiter)
+                        ){
+                        arrData.push( [] );
+                }
+                if (arrMatches[ 2 ]){
+                        var strMatchedValue = arrMatches[ 2 ].replace(
+                                new RegExp( "\"\"", "g" ),
+                                "\""
+                                );
+                } else {
+                        var strMatchedValue = arrMatches[ 3 ];
+                }
+                arrData[ arrData.length - 1 ].push( strMatchedValue );
+        }
+        return( arrData );
+    };
+}());
+;
+;
 cr.plugins_.Rex_Comment = function(runtime)
 {
 	this.runtime = runtime;
@@ -17279,6 +18216,187 @@ cr.plugins_.Rex_Container.tag2container = {};
 	};
 	Exps.prototype.ImagePointY = function (ret, imgpt) {
 		ret.set_float(0);
+	};
+}());
+;
+;
+cr.plugins_.Rex_Date = function(runtime)
+{
+	this.runtime = runtime;
+};
+(function ()
+{
+	var pluginProto = cr.plugins_.Rex_Date.prototype;
+	pluginProto.Type = function(plugin)
+	{
+		this.plugin = plugin;
+		this.runtime = plugin.runtime;
+	};
+	var typeProto = pluginProto.Type.prototype;
+	typeProto.onCreate = function()
+	{
+	};
+	pluginProto.Instance = function(type)
+	{
+		this.type = type;
+		this.runtime = type.runtime;
+	};
+	var instanceProto = pluginProto.Instance.prototype;
+	instanceProto.onCreate = function()
+	{
+	    this.timers = {};
+        /*
+        {
+            "state":1=run, 0=paused
+            "start": timstamp, updated when resumed
+            "acc": delta-time, updated when paused
+        }
+        */
+	};
+    var startTimer = function(timer, curTimestamp)
+    {
+        if (!timer)
+            timer = {};
+        if (!curTimestamp)
+            curTimestamp = (new Date()).getTime();
+        timer["state"] = 1;
+        timer["start"] = curTimestamp;
+        timer["acc"] = 0;
+        return timer;
+    };
+    var getElapsedTime = function(timer)
+    {
+        if (!timer)
+            return 0;
+        var deltaTime = timer["acc"];
+        if (timer["state"] === 1)
+        {
+            var curTime = (new Date()).getTime();
+            deltaTime += (curTime - timer["start"]);
+        }
+        return deltaTime;
+    };
+    var pauseTimer = function(timer)
+    {
+        if ((!timer) || (timer["state"] === 0))
+            return;
+        timer["state"] = 0;
+        var curTime = (new Date()).getTime();
+        timer["acc"] += (curTime - timer["start"]);
+    };
+    var resumeTimer = function(timer)
+    {
+        if ((!timer) || (timer["state"] === 1))
+            return;
+        timer["state"] = 1;
+        timer["start"] = (new Date()).getTime();
+    };
+	var getDate = function (timestamp)
+	{
+		return (timestamp != null)? new Date(timestamp): new Date();
+	};
+    instanceProto.saveToJSON = function ()
+	{
+		return { "tims": this.timers,
+                };
+	};
+	instanceProto.loadFromJSON = function (o)
+	{
+		this.timers = o["tims"];
+	};
+	function Cnds() {};
+	pluginProto.cnds = new Cnds();
+	function Acts() {};
+	pluginProto.acts = new Acts();
+	Acts.prototype.StartTimer = function (name)
+	{
+        this.timers[name] = startTimer(this.timers[name]);
+	};
+	Acts.prototype.PauseTimer = function (name)
+	{
+        pauseTimer(this.timers[name]);
+	};
+	Acts.prototype.ResumeTimer = function (name)
+	{
+        resumeTimer(this.timers[name]);
+	};
+	function Exps() {};
+	pluginProto.exps = new Exps();
+	Exps.prototype.Year = function (ret, timestamp)
+	{
+		ret.set_int(getDate(timestamp).getFullYear());
+	};
+	Exps.prototype.Month = function (ret, timestamp)
+	{
+	    ret.set_int(getDate(timestamp).getMonth()+1);
+	};
+	Exps.prototype.Date = function (ret, timestamp)
+	{
+	    ret.set_int(getDate(timestamp).getDate());
+	};
+	Exps.prototype.Day = function (ret, timestamp)
+	{
+	    ret.set_int(getDate(timestamp).getDay());
+	};
+	Exps.prototype.Hours = function (ret, timestamp)
+	{
+	    ret.set_int(getDate(timestamp).getHours());
+	};
+	Exps.prototype.Minutes = function (ret, timestamp)
+	{
+	    ret.set_int(getDate(timestamp).getMinutes());
+	};
+	Exps.prototype.Seconds = function (ret, timestamp)
+	{
+	    ret.set_int(getDate(timestamp).getSeconds());
+	};
+	Exps.prototype.Milliseconds = function (ret, timestamp)
+	{
+	    ret.set_int(getDate(timestamp).getMilliseconds());
+	};
+	Exps.prototype.Timer = function (ret, name)
+	{
+		ret.set_float(getElapsedTime(this.timers[name])/1000);
+	};
+	Exps.prototype.CurTicks = function (ret)
+	{
+	    var today = new Date();
+        ret.set_int(today.getTime());
+	};
+	Exps.prototype.UnixTimestamp = function (ret, year, month, day, hours, minutes, seconds, milliseconds)
+	{
+        var d;
+        if (year == null)
+        {
+            d = new Date();
+        }
+        else
+        {
+            month = month || 1;
+            day = day || 1;
+            hours = hours || 0;
+            minutes = minutes || 0;
+            seconds = seconds || 0;
+            milliseconds = milliseconds || 0;
+            d = new Date(year, month-1, day, hours, minutes, seconds, milliseconds);
+        }
+        ret.set_float(d.getTime());
+	};
+	Exps.prototype.Date2UnixTimestamp = function (ret, year, month, day, hours, minutes, seconds, milliseconds)
+	{
+        year = year || 2000;
+        month = month || 1;
+        day = day || 1;
+        hours = hours || 0;
+        minutes = minutes || 0;
+        seconds = seconds || 0;
+        milliseconds = milliseconds || 0;
+        var timestamp = new Date(year, month-1, day, hours, minutes, seconds, milliseconds); // build Date object
+        ret.set_float(timestamp.getTime());
+	};
+    Exps.prototype.LocalExpression = function (ret, timestamp, locales)
+	{
+	    ret.set_string( getDate(timestamp).toLocaleString(locales) );
 	};
 }());
 ;
@@ -20990,6 +22108,798 @@ cr.plugins_.Rex_TimeAway = function(runtime)
 }());
 ;
 ;
+cr.plugins_.Rex_TimeLine = function(runtime)
+{
+	this.runtime = runtime;
+};
+(function ()
+{
+    var TimerCacheKlass = function ()
+    {
+        this.lines = [];
+    };
+    var TimerCacheKlassProto = TimerCacheKlass.prototype;
+	TimerCacheKlassProto.alloc = function(timeline, on_timeout)
+	{
+        var timer;
+        if (this.lines.length > 0)
+        {
+            timer = this.lines.pop();
+			timeline.LinkTimer(timer);
+        }
+        else
+        {
+            timer = timeline.CreateTimer(on_timeout);
+        }
+		return timer;
+	};
+	TimerCacheKlassProto.free = function(timer)
+	{
+        timer.timeline = null;
+        this.lines.push(timer);
+	};
+	cr.plugins_.Rex_TimeLine.timerCache = new TimerCacheKlass();
+	var pluginProto = cr.plugins_.Rex_TimeLine.prototype;
+	pluginProto.Type = function(plugin)
+	{
+		this.plugin = plugin;
+		this.runtime = plugin.runtime;
+	};
+	var typeProto = pluginProto.Type.prototype;
+	typeProto.onCreate = function()
+	{
+	};
+	pluginProto.Instance = function(type)
+	{
+		this.type = type;
+		this.runtime = type.runtime;
+	};
+	var instanceProto = pluginProto.Instance.prototype;
+	instanceProto.onCreate = function()
+	{
+        this.updateMode = this.properties[0];
+        this.ManualMode = (this.updateMode === 0);
+        this.GameTimeMode = (this.updateMode === 1);
+        this.RealTimeMode = (this.updateMode === 2);
+        this.updateManually = this.ManualMode ;
+        this.updateWithGameTime = this.GameTimeMode;
+        this.updateWithRealTime = this.RealTimeMode;
+        if (this.RealTimeMode)
+        {
+            var timer = new Date();
+            this.lastRealTime = timer.getTime();
+        }
+        else
+        {
+            this.lastRealTime = null;
+        }
+        this.my_timescale = -1.0;
+        this.timeline = new cr.plugins_.Rex_TimeLine.TimeLine();
+        if (this.GameTimeMode || this.RealTimeMode)
+            this.runtime.tickMe(this);
+        this.check_name = "TIMELINE";
+        if (!this.recycled)
+        {
+            this.timers = {};
+        }
+        this.timerCache = cr.plugins_.Rex_TimeLine.timerCache;
+		this.exp_triggeredTimerName = "";
+        this.timersSave = null;
+        this.c2FnType = null;
+	};
+	instanceProto.onDestroy = function()
+	{
+        this.timeline.CleanAll();
+        var name;
+        for (name in this.timers)
+        {
+            this.destroyLocalTimer(name);
+        }
+	};
+    instanceProto.tick = function()
+    {
+        if (this.GameTimeMode)
+        {
+            if (this.updateWithGameTime)
+            {
+                var dt = this.runtime.getDt(this);
+                this.timeline.Dispatch(dt);
+            }
+        }
+        else if (this.RealTimeMode)
+        {
+            var timer = new Date();
+            var lastRealTime = timer.getTime();
+            if (this.updateWithRealTime)
+            {
+                var dt = (lastRealTime - this.lastRealTime)/1000;
+                this.timeline.Dispatch(dt);
+            }
+            this.lastRealTime = lastRealTime;
+        }
+    };
+    instanceProto.CreateTimer = function(on_timeout)
+    {
+        var timer = new cr.plugins_.Rex_TimeLine.Timer(this.timeline);
+        timer.TimeoutHandlerSet(on_timeout);  // hang OnTimeout function
+        return timer;
+    };
+    instanceProto.LinkTimer = function(timer)
+    {
+        timer.Reset(this.timeline)
+        return timer;
+    };
+	instanceProto.LoadTimer = function (load_info, on_timeout)
+	{
+        var timer = this.CreateTimer(on_timeout);
+        timer.loadFromJSON(load_info);
+        timer.afterLoad();
+        return timer;
+	};
+	instanceProto.getC2FnType = function (raise_assert_when_not_fnobj_avaiable)
+	{
+        if (this.c2FnType === null)
+        {
+            if (window["c2_callRexFunction2"])
+                this.c2FnType = "c2_callRexFunction2";
+            else if (window["c2_callFunction"])
+                this.c2FnType = "c2_callFunction";
+            else
+            {
+                if (raise_assert_when_not_fnobj_avaiable)
+;
+                this.c2FnType = "";
+            }
+        }
+        return this.c2FnType;
+	};
+    instanceProto.RunCallback = function(c2FnName, c2FnParms, raise_assert_when_not_fnobj_avaiable)
+    {
+        var c2FnGlobalName = this.getC2FnType(raise_assert_when_not_fnobj_avaiable);
+        if (c2FnGlobalName === "")
+            return null;
+        var retValue = window[c2FnGlobalName](c2FnName, c2FnParms);
+        return retValue;
+    };
+    instanceProto.TimeGet = function()
+    {
+        return this.timeline.absTime;
+    };
+	instanceProto.create_local_timer = function(timer_name)
+	{
+        var timer = this.timers[timer_name];
+        if (timer != null)  // timer exist
+        {
+            timer.Remove();
+        }
+        else      // get timer from timer cache
+        {
+            timer = this.timerCache.alloc(this, on_timeout);
+            timer.plugin = this;
+            this.timers[timer_name] = timer;
+        }
+        return timer;
+	};
+	instanceProto.destroyLocalTimer = function(timer_name)
+	{
+        var timer = this.timers[timer_name];
+        if (timer == null)
+            return;
+        timer.Remove();
+        delete this.timers[timer_name];
+        this.timerCache.free(timer);
+	};
+	instanceProto.timer_cache_clean = function()
+	{
+        this.timerCache.lines.length = 0;
+	};
+    var on_timeout = function ()
+    {
+        var plugin = this.plugin;
+        plugin.exp_triggeredTimerName = this._cb.name;
+        var name = this._cb.command;
+        var params = this._cb.params;
+        plugin.RunCallback(name, params, true);
+        if (this._repeat_count === 0)
+            this.Start();
+        else if (this._repeat_count > 1)
+        {
+            this._repeat_count -= 1;
+            this.Start();
+        }
+    };
+    instanceProto._get_timer_cb_params = function(timer_name)
+    {
+        var params = {
+            name:timer_name,
+            command:"",
+            params:[]
+            };
+        return params;
+    };   // fix me
+	instanceProto.saveToJSON = function ()
+	{
+        var name, timer, timersSave = {};
+        for (name in this.timers)
+        {
+            timer = this.timers[name];
+            timersSave[name] = {"tim": timer.saveToJSON(),
+                                "cmd": timer._cb.command,
+                                "pams": timer._cb.params,
+                                "rc": timer._repeat_count,
+                                };
+        }
+		return { "ts": this.my_timescale,
+                 "ug": this.updateWithGameTime,
+                 "tl": this.timeline.saveToJSON(),
+                 "timers": timersSave,
+                 "lrt": this.lastRealTime,
+                 "ft": this.c2FnType,
+                 };
+	};
+	instanceProto.loadFromJSON = function (o)
+	{
+        this.my_timescale = o["ts"];
+        this.timeline.loadFromJSON(o["tl"]);
+        this.timersSave = o["timers"];
+        this.lastRealTime = o["lrt"];
+        this.c2FnType = o["ft"];
+        this.onDestroy();
+        this.timer_cache_clean();
+	};
+	instanceProto.afterLoad = function ()
+	{
+        var name, timer_info, timer;
+        for (name in this.timersSave)
+        {
+            timer_info = this.timersSave[name];
+            timer = this.LoadTimer(timer_info["tim"], on_timeout);
+            timer.plugin = this;
+            timer._cb = this._get_timer_cb_params(name);
+            timer._cb.command = timer_info["cmd"];
+            timer._cb.params = timer_info["pams"];
+            timer._repeat_count = timer_info["rc"];
+        }
+        this.timersSave = null;
+	};
+	function Cnds() {};
+	pluginProto.cnds = new Cnds();
+	Cnds.prototype.IsRunning = function (timer_name)
+	{
+        var timer = this.timers[timer_name];
+		return (timer)? timer.IsActive(): false;
+	};
+	function Acts() {};
+	pluginProto.acts = new Acts();
+    Acts.prototype.PushTimeLine = function (deltaTime)
+	{
+        if (!this.updateManually)
+            return;
+        this.timeline.Dispatch(deltaTime);
+	};
+    Acts.prototype.Setup_deprecated = function () { };
+    Acts.prototype.CreateTimer_deprecated = function () { };
+    Acts.prototype.StartTimer = function (timer_name, delayTime, repeat_count)
+	{
+        var timer = this.timers[timer_name];
+        if (timer)
+        {
+            timer._repeat_count = repeat_count;
+            timer.Start(delayTime);
+        }
+	};
+    Acts.prototype.StartTrgTimer = function (delayTime)
+	{
+	    var timer_name = this.exp_triggeredTimerName;
+		var timer = this.timers[timer_name];
+        if (timer)
+            timer.Start(delayTime);
+	};
+    Acts.prototype.PauseTimer = function (timer_name)
+	{
+        var timer = this.timers[timer_name];
+        if (timer)
+            timer.Suspend();
+	};
+    Acts.prototype.ResumeTimer = function (timer_name)
+	{
+        var timer = this.timers[timer_name];
+        if (timer)
+            timer.Resume();
+	};
+    Acts.prototype.StopTimer = function (timer_name)
+	{
+        var timer = this.timers[timer_name];
+        if (timer)
+            timer.Remove();
+	};
+    Acts.prototype.CleanTimeLine = function ()
+	{
+        this.timeline.CleanAll();
+	};
+    Acts.prototype.DeleteTimer = function (timer_name)
+	{
+	    this.destroyLocalTimer(timer_name);
+	};
+    Acts.prototype.SetTimerParameter = function (timer_name, index, value)
+	{
+	    var timer = this.timers[timer_name];
+	    if (timer)
+	    {
+	        timer._cb.params[index] = value;
+	    }
+	};
+    Acts.prototype.PauseTimeLine = function ()
+	{
+        if (this.GameTimeMode)
+	        this.updateWithGameTime = false;
+        else if (this.RealTimeMode)
+            this.updateWithRealTime = false;
+	};
+    Acts.prototype.ResumeTimeLine = function ()
+	{
+        if (this.GameTimeMode)
+	        this.updateWithGameTime = true;
+        else if (this.RealTimeMode)
+            this.updateWithRealTime = true;
+	};
+    Acts.prototype.CreateTimer = function (timer_name, callback_name, callback_params)
+	{
+        var timer = this.create_local_timer(timer_name);
+        timer._cb = this._get_timer_cb_params(timer_name);
+        timer._cb.command = callback_name;
+        cr.shallowAssignArray(timer._cb.params, callback_params);
+	};
+    Acts.prototype.SetTimerParameters = function (timer_name, callback_params)
+	{
+	    var timer = this.timers[timer_name];
+		if (timer)
+		{
+		    cr.shallowAssignArray(timer._cb.params, callback_params);
+		}
+	};
+    Acts.prototype.SetTrgTimerParameters = function (callback_params)
+	{
+	    var timer_name = this.exp_triggeredTimerName;
+	    var timer = this.timers[timer_name];
+		if (timer)
+		{
+		    cr.shallowAssignArray(timer._cb.params, callback_params);
+		}
+	};
+    Acts.prototype.DeleteTrgTimer = function ()
+	{
+	    this.destroyLocalTimer(this.exp_triggeredTimerName);
+	};
+    Acts.prototype.PushTimeLineTo = function (t)
+	{
+        if (!this.updateManually)
+            return;
+        var deltaTime = t - this.timeline.absTime;
+        if (deltaTime < 0)
+            return;
+        this.timeline.Dispatch(deltaTime);
+	};
+    Acts.prototype.SetupCallback = function (callbackType)
+	{
+        this.c2FnType = (callbackType===0)? "c2_callFunction" : "c2_callRexFunction2";
+	};
+	function Exps() {};
+	pluginProto.exps = new Exps();
+	Exps.prototype.TimerRemainder = function (ret, timer_name)
+	{
+        var timer = this.timers[timer_name];
+        var t = (timer)? timer.RemainderTimeGet():0;
+	    ret.set_float(t);
+	};
+	Exps.prototype.TimerElapsed = function (ret, timer_name)
+	{
+        var timer = this.timers[timer_name];
+        var t = (timer)? timer.ElapsedTimeGet():0;
+	    ret.set_float(t);
+	};
+	Exps.prototype.TimerRemainderPercent = function (ret, timer_name)
+	{
+        var timer = this.timers[timer_name];
+        var t = (timer)? timer.RemainderTimePercentGet():0;
+	    ret.set_float(t);
+	};
+	Exps.prototype.TimerElapsedPercent = function (ret, timer_name)
+	{
+        var timer = this.timers[timer_name];
+        var t = (timer)? timer.ElapsedTimePercentGet():0;
+	    ret.set_float(t);
+	};
+	Exps.prototype.TimeLineTime = function (ret)
+	{
+	    ret.set_float(this.timeline.absTime);
+	};
+	Exps.prototype.TriggeredTimerName = function (ret)
+	{
+	    ret.set_string(this.exp_triggeredTimerName);
+	};
+	Exps.prototype.TimerDelayTime = function (ret)
+	{
+        var timer = this.timers[timer_name];
+        var t = (timer)? timer.DelayTimeGet():0;
+	    ret.set_float(t);
+	};
+}());
+(function ()
+{
+    cr.plugins_.Rex_TimeLine.TimeLine = function()
+    {
+        this.CleanAll();
+    };
+    var TimeLineProto = cr.plugins_.Rex_TimeLine.TimeLine.prototype;
+    var _TIMERQUEUE_SORT = function(timerA, timerB)
+    {
+        var ta = timerA.absTime;
+        var tb = timerB.absTime;
+        return (ta < tb) ? -1 : (ta > tb) ? 1 : 0;
+    }
+    TimeLineProto.CleanAll = function()
+	{
+        this.triggered_timer = null;
+        this.absTime = 0;
+        this._timer_absTime = 0;
+        this._waitingTimerQueue = [];
+        this._processTimerQueue = [];
+        this._suspendTimerQueue = [];
+        this._activateQueue = [this._waitingTimerQueue, this._processTimerQueue];
+        this._allQueues = [this._waitingTimerQueue, this._processTimerQueue, this._suspendTimerQueue];
+	};
+	TimeLineProto.CurrentTimeGet = function()
+	{
+        return this._timer_absTime;
+	};
+	TimeLineProto.RegistTimer = function(timer)
+	{
+        this._add_timer_to_activate_lists(timer);
+	};
+    TimeLineProto.RemoveTimer = function(timer)
+    {
+        this._removeTimerFromQueues(timer, false);  //activate_only=False
+        timer._idle();
+    };
+    TimeLineProto.Dispatch = function(deltaTime)
+    {
+        this.absTime += deltaTime;
+        this._waitingTimerQueue.sort(_TIMERQUEUE_SORT);
+        var quene_length = this._waitingTimerQueue.length;
+        var i, timer;
+        var timerCnt = 0;
+        for (i=0; i<quene_length; i++)
+        {
+            timer = this._waitingTimerQueue[i];
+            if (this._is_timer_time_out(timer))
+            {
+                this._processTimerQueue.push(timer);
+                timerCnt += 1;
+            }
+        }
+        if (timerCnt)
+        {
+            for(i=timerCnt; i<quene_length; i++)
+            {
+                this._waitingTimerQueue[i-timerCnt] = this._waitingTimerQueue[i];
+            }
+            this._waitingTimerQueue.length -= timerCnt;
+        }
+        while (this._processTimerQueue.length > 0)
+        {
+            this._processTimerQueue.sort(_TIMERQUEUE_SORT);
+            this.triggered_timer = this._processTimerQueue.shift();
+            this._timer_absTime = this.triggered_timer.absTime;
+            this.triggered_timer.DoHandle();
+        }
+        this._timer_absTime = this.absTime;
+    };
+    TimeLineProto.SuspendTimer = function(timer)
+    {
+        var is_success = this._removeTimerFromQueues(timer, true); //activate_only=True
+        if (is_success)
+        {
+            this._suspendTimerQueue.push(timer);
+            timer.__suspend__();
+        }
+        return is_success;
+    };
+    TimeLineProto.ResumeTimer = function(timer)
+    {
+        var is_success = false;
+        var itemIndex = this._suspendTimerQueue.indexOf(timer);
+        if (itemIndex != (-1))
+        {
+            cr.arrayRemove(this._suspendTimerQueue, itemIndex);
+            timer.__resume__();
+            this.RegistTimer(timer);
+            is_success = true;
+        }
+        return is_success;
+    };
+    TimeLineProto.SetTimescale = function(timer, timescale)
+    {
+        timer.__setTimescale__(timescale);
+        var is_success = this._removeTimerFromQueues(timer, true);  //activate_only=True
+        if (is_success)
+        {
+            this.RegistTimer(timer);
+        }
+        return is_success;
+    };
+    TimeLineProto.ChangeTimerRate = function(timer, rate)
+    {
+        timer.__changeRate__(rate);
+        var is_success = this._removeTimerFromQueues(timer, true);  //activate_only=True
+        if (is_success)
+        {
+            this.RegistTimer(timer);
+        }
+        return is_success;
+    };
+	TimeLineProto.saveToJSON = function ()
+	{
+		return { "at": this.absTime };
+	};
+	TimeLineProto.loadFromJSON = function (o)
+	{
+		this.absTime = o["at"];
+	};
+    TimeLineProto._is_timer_time_out = function(timer)
+    {
+        return (timer.absTime <= this.absTime);
+    };
+    TimeLineProto._add_timer_to_activate_lists = function(timer)
+    {
+        var queue = ( this._is_timer_time_out(timer) )?
+                    this._processTimerQueue : this._waitingTimerQueue;
+        queue.push(timer);
+    };
+    TimeLineProto._removeTimerFromQueues = function(timer, activate_only)
+    {
+        var is_success = false;
+        var timer_lists = (activate_only)? this._activateQueue : this._allQueues;
+        var i;
+        var lists_length = timer_lists.length;
+        var timer_queue, itemIndex;
+        for(i=0; i<lists_length; i++)
+        {
+            timer_queue = timer_lists[i];
+            itemIndex = timer_queue.indexOf(timer);
+            if (itemIndex!= (-1))
+            {
+                cr.arrayRemove(timer_queue, itemIndex);
+                is_success = true;
+                break;
+            }
+        }
+        return is_success;
+    };
+    cr.plugins_.Rex_TimeLine.Timer = function(timeline)
+    {
+		this.Reset(timeline);
+        this.extra = {};
+    };
+    var TimerProto = cr.plugins_.Rex_TimeLine.Timer.prototype;
+    TimerProto.Reset = function(timeline)
+    {
+        this.timeline = timeline;
+        this.delayTime = 0; //delayTime
+        this._remainderTime = 0;
+        this.absTime = 0;
+        this.timescale = 1;
+        this._idle();
+        this._setAbsTimeout(0); // delayTime
+    };
+    TimerProto.Restart = function(delayTime)
+    {
+        if (delayTime != null)  // assign new delay time
+        {
+            this.delayTime = delayTime;
+        }
+        var t = this.delayTime / this.timescale;
+        this._setAbsTimeout(t);
+        if (this._isAlive)
+        {
+            if (!this._isActive)
+            {
+                this._remainderTime = this.absTime;
+                this.Resume(); // update timer in TimeLineMgr
+            }
+        }
+        else
+        {
+            this.timeline.RegistTimer(this);
+            this._run();
+        }
+    };
+    TimerProto.Start = TimerProto.Restart;
+    TimerProto.Suspend = function()
+    {
+        this.timeline.SuspendTimer(this);
+    };
+    TimerProto.Resume = function()
+    {
+        this.timeline.ResumeTimer(this);
+    };
+    TimerProto.SetTimescale = function(timescale)
+    {
+        if (this._isActive && (timescale === this.timescale))
+            return;
+        this.timeline.SetTimescale(this, timescale);
+    };
+    TimerProto.ChangeRate = function(rate)
+    {
+        this.timeline.ChangeTimerRate(this, rate);
+    };
+    TimerProto.Remove = function()
+    {
+        if (this._isAlive)
+            this.timeline.RemoveTimer(this);
+    };
+    TimerProto.IsAlive = function()
+    {
+        return this._isAlive;
+    };
+    TimerProto.IsActive = function()
+    {
+        return (this._isAlive && this._isActive);
+    };
+    TimerProto.RemainderTimeGet = function(ignoreTimeScale)
+    {
+        var remainderTime;
+        if (this.IsActive())       // -> run
+            remainderTime = this.absTime - this.timeline.CurrentTimeGet();
+        else if (this.IsAlive())   // (!this.IsActive() && this.IsAlive()) -> suspend
+            remainderTime = this._remainderTime;
+        else
+            remainderTime = 0;
+        if (!ignoreTimeScale)
+        {
+            if ((this.timescale !== 0) || (this.timescale !== 1))
+                remainderTime *= this.timescale;
+        }
+        return remainderTime;
+    };
+    TimerProto.RemainderTimeSet = function(remainderTime)
+    {
+        if (!this.IsAlive())
+            return;
+        var delayTime = this.delayTime;
+        if ((this.timescale !== 0) || (this.timescale !== 1))
+            delayTime /= this.timescale;
+        this._remainderTime = cr.clamp(remainderTime, 0, delayTime);
+        this.absTime = this.timeline.CurrentTimeGet() + this._remainderTime;
+    };
+    TimerProto.ElapsedTimeGet = function()
+    {
+        return (this.delayTime - this.RemainderTimeGet());
+    };
+    TimerProto.RemainderTimePercentGet = function()
+    {
+        return (this.delayTime == 0)? 0:
+               (this.RemainderTimeGet() / this.delayTime);
+    };
+    TimerProto.ElapsedTimePercentGet = function()
+    {
+        return (this.delayTime == 0)? 0:
+               (this.ElapsedTimeGet() / this.delayTime);
+    };
+    TimerProto.ExpiredTimeGet = function()
+    {
+        return (this.timeline.absTime - this.absTime);
+    };
+    TimerProto.DelayTimeGet = function()
+    {
+        return this.delayTime;
+    };
+    TimerProto.TimeoutHandlerSet = function(handler)
+    {
+        this.OnTimeout = handler;
+    };
+    TimerProto.DoHandle = function()
+    {
+        this._idle();
+        if (this.OnTimeout)
+            this.OnTimeout();
+    };
+	TimerProto.saveToJSON = function ()
+	{
+	    var remainderTime = this.RemainderTimeGet(true);
+		return { "dt": this.delayTime,
+                 "rt": remainderTime,
+                 "ts": this.timescale,
+                 "alive": this._isAlive,
+                 "active": this._isActive,
+                 "ex": this.extra
+                 };
+	};
+	TimerProto.loadFromJSON = function (o)
+	{
+        this.delayTime = o["dt"];
+        this._isAlive = o["alive"];
+        this._isActive = o["active"];
+        this.timescale = o["ts"];    // compaticable
+        this.extra = o["ex"];
+        this.RemainderTimeSet(o["rt"]);  // set remaind_time and absTime
+	};
+	TimerProto.afterLoad = function ()
+	{
+        if (this.IsAlive())
+        {
+            this.timeline.RegistTimer(this);
+            if (!this.IsActive())
+            {
+                this.timeline.SuspendTimer(this);
+            }
+        }
+	};
+    TimerProto._idle = function()
+    {
+        this._isAlive = false;   // start, stop
+        this._isActive = false;  // suspend, resume
+    };
+    TimerProto._run = function()
+    {
+        this._isAlive = true;
+        this._isActive = true;
+    };
+    TimerProto._setAbsTimeout = function(deltaTime)
+    {
+        this.absTime = this.timeline.CurrentTimeGet() + deltaTime;
+    };
+    TimerProto.__suspend__ = function()
+    {
+        this._remainderTime = this.absTime - this.timeline.CurrentTimeGet();
+        this._isActive = false;
+    };
+    TimerProto.__resume__ = function()
+    {
+        this._setAbsTimeout(this._remainderTime);
+        this._isActive = true;
+    };
+    TimerProto.__setTimescale__ = function(timescale)
+    {
+        if (timescale < 0)   // invalid
+            return;
+        var reset_rate = false;
+        if ((timescale == 0) && this._isActive) // suspend
+        {
+            this.Suspend();
+        }
+        else if ((timescale > 0) && (!this._isActive)) // resume
+        {
+            this.Resume();
+            reset_rate = true;
+        }
+        else if ((timescale > 0) && this._isActive) // this._isActive, normal
+        {
+            reset_rate = true;
+        }
+        if (reset_rate)
+        {
+            var rate = this.timescale / timescale;
+            this.__changeRate__(rate);
+            this.timescale = timescale;
+        }
+    };
+    TimerProto.__changeRate__ = function(rate)
+    {
+        if (this._isActive)
+        {
+            var absTime = this.timeline.CurrentTimeGet();
+            var remainderTime = this.absTime - absTime;
+            this.absTime = absTime + (remainderTime*rate);
+        }
+        else
+        {
+            this._remainderTime *= rate;
+        }
+    };
+}());
+;
+;
 cr.plugins_.Rex_WaitEvent = function(runtime)
 {
 	this.runtime = runtime;
@@ -24313,25 +26223,13 @@ cr.plugins_.Sprite = function(runtime)
 }());
 ;
 ;
-cr.plugins_.Text = function(runtime)
+cr.plugins_.TextBox = function(runtime)
 {
 	this.runtime = runtime;
 };
 (function ()
 {
-	var pluginProto = cr.plugins_.Text.prototype;
-	pluginProto.onCreate = function ()
-	{
-		pluginProto.acts.SetWidth = function (w)
-		{
-			if (this.width !== w)
-			{
-				this.width = w;
-				this.text_changed = true;	// also recalculate text wrapping
-				this.set_bbox_changed();
-			}
-		};
-	};
+	var pluginProto = cr.plugins_.TextBox.prototype;
 	pluginProto.Type = function(plugin)
 	{
 		this.plugin = plugin;
@@ -24341,607 +26239,297 @@ cr.plugins_.Text = function(runtime)
 	typeProto.onCreate = function()
 	{
 	};
-	typeProto.onLostWebGLContext = function ()
-	{
-		if (this.is_family)
-			return;
-		var i, len, inst;
-		for (i = 0, len = this.instances.length; i < len; i++)
-		{
-			inst = this.instances[i];
-			inst.mycanvas = null;
-			inst.myctx = null;
-			inst.mytex = null;
-		}
-	};
 	pluginProto.Instance = function(type)
 	{
 		this.type = type;
 		this.runtime = type.runtime;
-		if (this.recycled)
-			cr.clearArray(this.lines);
-		else
-			this.lines = [];		// for word wrapping
-		this.text_changed = true;
 	};
 	var instanceProto = pluginProto.Instance.prototype;
-	var requestedWebFonts = {};		// already requested web fonts have an entry here
+	var elemTypes = ["text", "password", "email", "number", "tel", "url"];
+	if (navigator.userAgent.indexOf("MSIE 9") > -1)
+	{
+		elemTypes[2] = "text";
+		elemTypes[3] = "text";
+		elemTypes[4] = "text";
+		elemTypes[5] = "text";
+	}
 	instanceProto.onCreate = function()
 	{
-		this.text = this.properties[0];
-		this.visible = (this.properties[1] === 0);		// 0=visible, 1=invisible
-		this.font = this.properties[2];
-		this.color = this.properties[3];
-		this.halign = this.properties[4];				// 0=left, 1=center, 2=right
-		this.valign = this.properties[5];				// 0=top, 1=center, 2=bottom
-		this.wrapbyword = (this.properties[7] === 0);	// 0=word, 1=character
-		this.lastwidth = this.width;
-		this.lastwrapwidth = this.width;
-		this.lastheight = this.height;
-		this.line_height_offset = this.properties[8];
-		this.facename = "";
-		this.fontstyle = "";
-		this.ptSize = 0;
-		this.textWidth = 0;
-		this.textHeight = 0;
-		this.parseFont();
-		this.mycanvas = null;
-		this.myctx = null;
-		this.mytex = null;
-		this.need_text_redraw = false;
-		this.last_render_tick = this.runtime.tickcount;
-		if (this.recycled)
-			this.rcTex.set(0, 0, 1, 1);
-		else
-			this.rcTex = new cr.rect(0, 0, 1, 1);
-		if (this.runtime.glwrap)
-			this.runtime.tickMe(this);
-;
-	};
-	instanceProto.parseFont = function ()
-	{
-		var arr = this.font.split(" ");
-		var i;
-		for (i = 0; i < arr.length; i++)
+		if (this.runtime.isDomFree)
 		{
-			if (arr[i].substr(arr[i].length - 2, 2) === "pt")
-			{
-				this.ptSize = parseInt(arr[i].substr(0, arr[i].length - 2));
-				this.pxHeight = Math.ceil((this.ptSize / 72.0) * 96.0) + 4;	// assume 96dpi...
-				if (i > 0)
-					this.fontstyle = arr[i - 1];
-				this.facename = arr[i + 1];
-				for (i = i + 2; i < arr.length; i++)
-					this.facename += " " + arr[i];
-				break;
-			}
+			cr.logexport("[Construct 2] Textbox plugin not supported on this platform - the object will not be created");
+			return;
 		}
+		if (this.properties[7] === 6)	// textarea
+		{
+			this.elem = document.createElement("textarea");
+			jQuery(this.elem).css("resize", "none");
+		}
+		else
+		{
+			this.elem = document.createElement("input");
+			this.elem.type = elemTypes[this.properties[7]];
+		}
+		this.elem.id = this.properties[9];
+		jQuery(this.elem).appendTo(this.runtime.canvasdiv ? this.runtime.canvasdiv : "body");
+		this.elem["autocomplete"] = "off";
+		this.elem.value = this.properties[0];
+		this.elem["placeholder"] = this.properties[1];
+		this.elem.title = this.properties[2];
+		this.elem.disabled = (this.properties[4] === 0);
+		this.elem["readOnly"] = (this.properties[5] === 1);
+		this.elem["spellcheck"] = (this.properties[6] === 1);
+		this.autoFontSize = (this.properties[8] !== 0);
+		this.element_hidden = false;
+		if (this.properties[3] === 0)
+		{
+			jQuery(this.elem).hide();
+			this.visible = false;
+			this.element_hidden = true;
+		}
+		var onchangetrigger = (function (self) {
+			return function() {
+				self.runtime.trigger(cr.plugins_.TextBox.prototype.cnds.OnTextChanged, self);
+			};
+		})(this);
+		this.elem["oninput"] = onchangetrigger;
+		if (navigator.userAgent.indexOf("MSIE") !== -1)
+			this.elem["oncut"] = onchangetrigger;
+		this.elem.onclick = (function (self) {
+			return function(e) {
+				e.stopPropagation();
+				self.runtime.isInUserInputEvent = true;
+				self.runtime.trigger(cr.plugins_.TextBox.prototype.cnds.OnClicked, self);
+				self.runtime.isInUserInputEvent = false;
+			};
+		})(this);
+		this.elem.ondblclick = (function (self) {
+			return function(e) {
+				e.stopPropagation();
+				self.runtime.isInUserInputEvent = true;
+				self.runtime.trigger(cr.plugins_.TextBox.prototype.cnds.OnDoubleClicked, self);
+				self.runtime.isInUserInputEvent = false;
+			};
+		})(this);
+		this.elem.addEventListener("touchstart", function (e) {
+			e.stopPropagation();
+		}, false);
+		this.elem.addEventListener("touchmove", function (e) {
+			e.stopPropagation();
+		}, false);
+		this.elem.addEventListener("touchend", function (e) {
+			e.stopPropagation();
+		}, false);
+		jQuery(this.elem).mousedown(function (e) {
+			e.stopPropagation();
+		});
+		jQuery(this.elem).mouseup(function (e) {
+			e.stopPropagation();
+		});
+		jQuery(this.elem).keydown(function (e) {
+			if (e.which !== 13 && e.which != 27)	// allow enter and escape
+				e.stopPropagation();
+		});
+		jQuery(this.elem).keyup(function (e) {
+			if (e.which !== 13 && e.which != 27)	// allow enter and escape
+				e.stopPropagation();
+		});
+		this.lastLeft = 0;
+		this.lastTop = 0;
+		this.lastRight = 0;
+		this.lastBottom = 0;
+		this.lastWinWidth = 0;
+		this.lastWinHeight = 0;
+		this.updatePosition(true);
+		this.runtime.tickMe(this);
 	};
 	instanceProto.saveToJSON = function ()
 	{
 		return {
-			"t": this.text,
-			"f": this.font,
-			"c": this.color,
-			"ha": this.halign,
-			"va": this.valign,
-			"wr": this.wrapbyword,
-			"lho": this.line_height_offset,
-			"fn": this.facename,
-			"fs": this.fontstyle,
-			"ps": this.ptSize,
-			"pxh": this.pxHeight,
-			"tw": this.textWidth,
-			"th": this.textHeight,
-			"lrt": this.last_render_tick
+			"text": this.elem.value,
+			"placeholder": this.elem.placeholder,
+			"tooltip": this.elem.title,
+			"disabled": !!this.elem.disabled,
+			"readonly": !!this.elem.readOnly,
+			"spellcheck": !!this.elem["spellcheck"]
 		};
 	};
 	instanceProto.loadFromJSON = function (o)
 	{
-		this.text = o["t"];
-		this.font = o["f"];
-		this.color = o["c"];
-		this.halign = o["ha"];
-		this.valign = o["va"];
-		this.wrapbyword = o["wr"];
-		this.line_height_offset = o["lho"];
-		this.facename = o["fn"];
-		this.fontstyle = o["fs"];
-		this.ptSize = o["ps"];
-		this.pxHeight = o["pxh"];
-		this.textWidth = o["tw"];
-		this.textHeight = o["th"];
-		this.last_render_tick = o["lrt"];
-		this.text_changed = true;
-		this.lastwidth = this.width;
-		this.lastwrapwidth = this.width;
-		this.lastheight = this.height;
-	};
-	instanceProto.tick = function ()
-	{
-		if (this.runtime.glwrap && this.mytex && (this.runtime.tickcount - this.last_render_tick >= 300))
-		{
-			var layer = this.layer;
-            this.update_bbox();
-            var bbox = this.bbox;
-            if (bbox.right < layer.viewLeft || bbox.bottom < layer.viewTop || bbox.left > layer.viewRight || bbox.top > layer.viewBottom)
-			{
-				this.runtime.glwrap.deleteTexture(this.mytex);
-				this.mytex = null;
-				this.myctx = null;
-				this.mycanvas = null;
-			}
-		}
+		this.elem.value = o["text"];
+		this.elem.placeholder = o["placeholder"];
+		this.elem.title = o["tooltip"];
+		this.elem.disabled = o["disabled"];
+		this.elem.readOnly = o["readonly"];
+		this.elem["spellcheck"] = o["spellcheck"];
 	};
 	instanceProto.onDestroy = function ()
 	{
-		this.myctx = null;
-		this.mycanvas = null;
-		if (this.runtime.glwrap && this.mytex)
-			this.runtime.glwrap.deleteTexture(this.mytex);
-		this.mytex = null;
+		if (this.runtime.isDomFree)
+				return;
+		jQuery(this.elem).remove();
+		this.elem = null;
 	};
-	instanceProto.updateFont = function ()
+	instanceProto.tick = function ()
 	{
-		this.font = this.fontstyle + " " + this.ptSize.toString() + "pt " + this.facename;
-		this.text_changed = true;
-		this.runtime.redraw = true;
+		this.updatePosition();
 	};
-	instanceProto.draw = function(ctx, glmode)
+	instanceProto.updatePosition = function (first)
 	{
-		ctx.font = this.font;
-		ctx.textBaseline = "top";
-		ctx.fillStyle = this.color;
-		ctx.globalAlpha = glmode ? 1 : this.opacity;
-		var myscale = 1;
-		if (glmode)
+		if (this.runtime.isDomFree)
+			return;
+		var left = this.layer.layerToCanvas(this.x, this.y, true);
+		var top = this.layer.layerToCanvas(this.x, this.y, false);
+		var right = this.layer.layerToCanvas(this.x + this.width, this.y + this.height, true);
+		var bottom = this.layer.layerToCanvas(this.x + this.width, this.y + this.height, false);
+		var rightEdge = this.runtime.width / this.runtime.devicePixelRatio;
+		var bottomEdge = this.runtime.height / this.runtime.devicePixelRatio;
+		if (!this.visible || !this.layer.visible || right <= 0 || bottom <= 0 || left >= rightEdge || top >= bottomEdge)
 		{
-			myscale = Math.abs(this.layer.getScale());
-			ctx.save();
-			ctx.scale(myscale, myscale);
+			if (!this.element_hidden)
+				jQuery(this.elem).hide();
+			this.element_hidden = true;
+			return;
 		}
-		if (this.text_changed || this.width !== this.lastwrapwidth)
+		if (left < 1)
+			left = 1;
+		if (top < 1)
+			top = 1;
+		if (right >= rightEdge)
+			right = rightEdge - 1;
+		if (bottom >= bottomEdge)
+			bottom = bottomEdge - 1;
+		var curWinWidth = window.innerWidth;
+		var curWinHeight = window.innerHeight;
+		if (!first && this.lastLeft === left && this.lastTop === top && this.lastRight === right && this.lastBottom === bottom && this.lastWinWidth === curWinWidth && this.lastWinHeight === curWinHeight)
 		{
-			this.type.plugin.WordWrap(this.text, this.lines, ctx, this.width, this.wrapbyword);
-			this.text_changed = false;
-			this.lastwrapwidth = this.width;
+			if (this.element_hidden)
+			{
+				jQuery(this.elem).show();
+				this.element_hidden = false;
+			}
+			return;
 		}
-		this.update_bbox();
-		var penX = glmode ? 0 : this.bquad.tlx;
-		var penY = glmode ? 0 : this.bquad.tly;
-		if (this.runtime.pixel_rounding)
+		this.lastLeft = left;
+		this.lastTop = top;
+		this.lastRight = right;
+		this.lastBottom = bottom;
+		this.lastWinWidth = curWinWidth;
+		this.lastWinHeight = curWinHeight;
+		if (this.element_hidden)
 		{
-			penX = (penX + 0.5) | 0;
-			penY = (penY + 0.5) | 0;
+			jQuery(this.elem).show();
+			this.element_hidden = false;
 		}
-		if (this.angle !== 0 && !glmode)
-		{
-			ctx.save();
-			ctx.translate(penX, penY);
-			ctx.rotate(this.angle);
-			penX = 0;
-			penY = 0;
-		}
-		var endY = penY + this.height;
-		var line_height = this.pxHeight;
-		line_height += this.line_height_offset;
-		var drawX;
-		var i;
-		if (this.valign === 1)		// center
-			penY += Math.max(this.height / 2 - (this.lines.length * line_height) / 2, 0);
-		else if (this.valign === 2)	// bottom
-			penY += Math.max(this.height - (this.lines.length * line_height) - 2, 0);
-		for (i = 0; i < this.lines.length; i++)
-		{
-			drawX = penX;
-			if (this.halign === 1)		// center
-				drawX = penX + (this.width - this.lines[i].width) / 2;
-			else if (this.halign === 2)	// right
-				drawX = penX + (this.width - this.lines[i].width);
-			ctx.fillText(this.lines[i].text, drawX, penY);
-			penY += line_height;
-			if (penY >= endY - line_height)
-				break;
-		}
-		if (this.angle !== 0 || glmode)
-			ctx.restore();
-		this.last_render_tick = this.runtime.tickcount;
+		var offx = Math.round(left) + jQuery(this.runtime.canvas).offset().left;
+		var offy = Math.round(top) + jQuery(this.runtime.canvas).offset().top;
+		jQuery(this.elem).css("position", "absolute");
+		jQuery(this.elem).offset({left: offx, top: offy});
+		jQuery(this.elem).width(Math.round(right - left));
+		jQuery(this.elem).height(Math.round(bottom - top));
+		if (this.autoFontSize)
+			jQuery(this.elem).css("font-size", ((this.layer.getScale(true) / this.runtime.devicePixelRatio) - 0.2) + "em");
+	};
+	instanceProto.draw = function(ctx)
+	{
 	};
 	instanceProto.drawGL = function(glw)
 	{
-		if (this.width < 1 || this.height < 1)
-			return;
-		var need_redraw = this.text_changed || this.need_text_redraw;
-		this.need_text_redraw = false;
-		var layer_scale = this.layer.getScale();
-		var layer_angle = this.layer.getAngle();
-		var rcTex = this.rcTex;
-		var floatscaledwidth = layer_scale * this.width;
-		var floatscaledheight = layer_scale * this.height;
-		var scaledwidth = Math.ceil(floatscaledwidth);
-		var scaledheight = Math.ceil(floatscaledheight);
-		var absscaledwidth = Math.abs(scaledwidth);
-		var absscaledheight = Math.abs(scaledheight);
-		var halfw = this.runtime.draw_width / 2;
-		var halfh = this.runtime.draw_height / 2;
-		if (!this.myctx)
-		{
-			this.mycanvas = document.createElement("canvas");
-			this.mycanvas.width = absscaledwidth;
-			this.mycanvas.height = absscaledheight;
-			this.lastwidth = absscaledwidth;
-			this.lastheight = absscaledheight;
-			need_redraw = true;
-			this.myctx = this.mycanvas.getContext("2d");
-		}
-		if (absscaledwidth !== this.lastwidth || absscaledheight !== this.lastheight)
-		{
-			this.mycanvas.width = absscaledwidth;
-			this.mycanvas.height = absscaledheight;
-			if (this.mytex)
-			{
-				glw.deleteTexture(this.mytex);
-				this.mytex = null;
-			}
-			need_redraw = true;
-		}
-		if (need_redraw)
-		{
-			this.myctx.clearRect(0, 0, absscaledwidth, absscaledheight);
-			this.draw(this.myctx, true);
-			if (!this.mytex)
-				this.mytex = glw.createEmptyTexture(absscaledwidth, absscaledheight, this.runtime.linearSampling, this.runtime.isMobile);
-			glw.videoToTexture(this.mycanvas, this.mytex, this.runtime.isMobile);
-		}
-		this.lastwidth = absscaledwidth;
-		this.lastheight = absscaledheight;
-		glw.setTexture(this.mytex);
-		glw.setOpacity(this.opacity);
-		glw.resetModelView();
-		glw.translate(-halfw, -halfh);
-		glw.updateModelView();
-		var q = this.bquad;
-		var tlx = this.layer.layerToCanvas(q.tlx, q.tly, true, true);
-		var tly = this.layer.layerToCanvas(q.tlx, q.tly, false, true);
-		var trx = this.layer.layerToCanvas(q.trx, q.try_, true, true);
-		var try_ = this.layer.layerToCanvas(q.trx, q.try_, false, true);
-		var brx = this.layer.layerToCanvas(q.brx, q.bry, true, true);
-		var bry = this.layer.layerToCanvas(q.brx, q.bry, false, true);
-		var blx = this.layer.layerToCanvas(q.blx, q.bly, true, true);
-		var bly = this.layer.layerToCanvas(q.blx, q.bly, false, true);
-		if (this.runtime.pixel_rounding || (this.angle === 0 && layer_angle === 0))
-		{
-			var ox = ((tlx + 0.5) | 0) - tlx;
-			var oy = ((tly + 0.5) | 0) - tly
-			tlx += ox;
-			tly += oy;
-			trx += ox;
-			try_ += oy;
-			brx += ox;
-			bry += oy;
-			blx += ox;
-			bly += oy;
-		}
-		if (this.angle === 0 && layer_angle === 0)
-		{
-			trx = tlx + scaledwidth;
-			try_ = tly;
-			brx = trx;
-			bry = tly + scaledheight;
-			blx = tlx;
-			bly = bry;
-			rcTex.right = 1;
-			rcTex.bottom = 1;
-		}
-		else
-		{
-			rcTex.right = floatscaledwidth / scaledwidth;
-			rcTex.bottom = floatscaledheight / scaledheight;
-		}
-		glw.quadTex(tlx, tly, trx, try_, brx, bry, blx, bly, rcTex);
-		glw.resetModelView();
-		glw.scale(layer_scale, layer_scale);
-		glw.rotateZ(-this.layer.getAngle());
-		glw.translate((this.layer.viewLeft + this.layer.viewRight) / -2, (this.layer.viewTop + this.layer.viewBottom) / -2);
-		glw.updateModelView();
-		this.last_render_tick = this.runtime.tickcount;
-	};
-	var wordsCache = [];
-	pluginProto.TokeniseWords = function (text)
-	{
-		cr.clearArray(wordsCache);
-		var cur_word = "";
-		var ch;
-		var i = 0;
-		while (i < text.length)
-		{
-			ch = text.charAt(i);
-			if (ch === "\n")
-			{
-				if (cur_word.length)
-				{
-					wordsCache.push(cur_word);
-					cur_word = "";
-				}
-				wordsCache.push("\n");
-				++i;
-			}
-			else if (ch === " " || ch === "\t" || ch === "-")
-			{
-				do {
-					cur_word += text.charAt(i);
-					i++;
-				}
-				while (i < text.length && (text.charAt(i) === " " || text.charAt(i) === "\t"));
-				wordsCache.push(cur_word);
-				cur_word = "";
-			}
-			else if (i < text.length)
-			{
-				cur_word += ch;
-				i++;
-			}
-		}
-		if (cur_word.length)
-			wordsCache.push(cur_word);
-	};
-	var linesCache = [];
-	function allocLine()
-	{
-		if (linesCache.length)
-			return linesCache.pop();
-		else
-			return {};
-	};
-	function freeLine(l)
-	{
-		linesCache.push(l);
-	};
-	function freeAllLines(arr)
-	{
-		var i, len;
-		for (i = 0, len = arr.length; i < len; i++)
-		{
-			freeLine(arr[i]);
-		}
-		cr.clearArray(arr);
-	};
-	pluginProto.WordWrap = function (text, lines, ctx, width, wrapbyword)
-	{
-		if (!text || !text.length)
-		{
-			freeAllLines(lines);
-			return;
-		}
-		if (width <= 2.0)
-		{
-			freeAllLines(lines);
-			return;
-		}
-		if (text.length <= 100 && text.indexOf("\n") === -1)
-		{
-			var all_width = ctx.measureText(text).width;
-			if (all_width <= width)
-			{
-				freeAllLines(lines);
-				lines.push(allocLine());
-				lines[0].text = text;
-				lines[0].width = all_width;
-				return;
-			}
-		}
-		this.WrapText(text, lines, ctx, width, wrapbyword);
-	};
-	function trimSingleSpaceRight(str)
-	{
-		if (!str.length || str.charAt(str.length - 1) !== " ")
-			return str;
-		return str.substring(0, str.length - 1);
-	};
-	pluginProto.WrapText = function (text, lines, ctx, width, wrapbyword)
-	{
-		var wordArray;
-		if (wrapbyword)
-		{
-			this.TokeniseWords(text);	// writes to wordsCache
-			wordArray = wordsCache;
-		}
-		else
-			wordArray = text;
-		var cur_line = "";
-		var prev_line;
-		var line_width;
-		var i;
-		var lineIndex = 0;
-		var line;
-		for (i = 0; i < wordArray.length; i++)
-		{
-			if (wordArray[i] === "\n")
-			{
-				if (lineIndex >= lines.length)
-					lines.push(allocLine());
-				cur_line = trimSingleSpaceRight(cur_line);		// for correct center/right alignment
-				line = lines[lineIndex];
-				line.text = cur_line;
-				line.width = ctx.measureText(cur_line).width;
-				lineIndex++;
-				cur_line = "";
-				continue;
-			}
-			prev_line = cur_line;
-			cur_line += wordArray[i];
-			line_width = ctx.measureText(cur_line).width;
-			if (line_width >= width)
-			{
-				if (lineIndex >= lines.length)
-					lines.push(allocLine());
-				prev_line = trimSingleSpaceRight(prev_line);
-				line = lines[lineIndex];
-				line.text = prev_line;
-				line.width = ctx.measureText(prev_line).width;
-				lineIndex++;
-				cur_line = wordArray[i];
-				if (!wrapbyword && cur_line === " ")
-					cur_line = "";
-			}
-		}
-		if (cur_line.length)
-		{
-			if (lineIndex >= lines.length)
-				lines.push(allocLine());
-			cur_line = trimSingleSpaceRight(cur_line);
-			line = lines[lineIndex];
-			line.text = cur_line;
-			line.width = ctx.measureText(cur_line).width;
-			lineIndex++;
-		}
-		for (i = lineIndex; i < lines.length; i++)
-			freeLine(lines[i]);
-		lines.length = lineIndex;
 	};
 	function Cnds() {};
-	Cnds.prototype.CompareText = function(text_to_compare, case_sensitive)
+	Cnds.prototype.CompareText = function (text, case_)
 	{
-		if (case_sensitive)
-			return this.text == text_to_compare;
+		if (this.runtime.isDomFree)
+			return false;
+		if (case_ === 0)	// insensitive
+			return cr.equals_nocase(this.elem.value, text);
 		else
-			return cr.equals_nocase(this.text, text_to_compare);
+			return this.elem.value === text;
+	};
+	Cnds.prototype.OnTextChanged = function ()
+	{
+		return true;
+	};
+	Cnds.prototype.OnClicked = function ()
+	{
+		return true;
+	};
+	Cnds.prototype.OnDoubleClicked = function ()
+	{
+		return true;
 	};
 	pluginProto.cnds = new Cnds();
 	function Acts() {};
-	Acts.prototype.SetText = function(param)
-	{
-		if (cr.is_number(param) && param < 1e9)
-			param = Math.round(param * 1e10) / 1e10;	// round to nearest ten billionth - hides floating point errors
-		var text_to_set = param.toString();
-		if (this.text !== text_to_set)
-		{
-			this.text = text_to_set;
-			this.text_changed = true;
-			this.runtime.redraw = true;
-		}
-	};
-	Acts.prototype.AppendText = function(param)
-	{
-		if (cr.is_number(param))
-			param = Math.round(param * 1e10) / 1e10;	// round to nearest ten billionth - hides floating point errors
-		var text_to_append = param.toString();
-		if (text_to_append)	// not empty
-		{
-			this.text += text_to_append;
-			this.text_changed = true;
-			this.runtime.redraw = true;
-		}
-	};
-	Acts.prototype.SetFontFace = function (face_, style_)
-	{
-		var newstyle = "";
-		switch (style_) {
-		case 1: newstyle = "bold"; break;
-		case 2: newstyle = "italic"; break;
-		case 3: newstyle = "bold italic"; break;
-		}
-		if (face_ === this.facename && newstyle === this.fontstyle)
-			return;		// no change
-		this.facename = face_;
-		this.fontstyle = newstyle;
-		this.updateFont();
-	};
-	Acts.prototype.SetFontSize = function (size_)
-	{
-		if (this.ptSize === size_)
-			return;
-		this.ptSize = size_;
-		this.pxHeight = Math.ceil((this.ptSize / 72.0) * 96.0) + 4;	// assume 96dpi...
-		this.updateFont();
-	};
-	Acts.prototype.SetFontColor = function (rgb)
-	{
-		var newcolor = "rgb(" + cr.GetRValue(rgb).toString() + "," + cr.GetGValue(rgb).toString() + "," + cr.GetBValue(rgb).toString() + ")";
-		if (newcolor === this.color)
-			return;
-		this.color = newcolor;
-		this.need_text_redraw = true;
-		this.runtime.redraw = true;
-	};
-	Acts.prototype.SetWebFont = function (familyname_, cssurl_)
+	Acts.prototype.SetText = function (text)
 	{
 		if (this.runtime.isDomFree)
-		{
-			cr.logexport("[Construct 2] Text plugin: 'Set web font' not supported on this platform - the action has been ignored");
-			return;		// DC todo
-		}
-		var self = this;
-		var refreshFunc = (function () {
-							self.runtime.redraw = true;
-							self.text_changed = true;
-						});
-		if (requestedWebFonts.hasOwnProperty(cssurl_))
-		{
-			var newfacename = "'" + familyname_ + "'";
-			if (this.facename === newfacename)
-				return;	// no change
-			this.facename = newfacename;
-			this.updateFont();
-			for (var i = 1; i < 10; i++)
-			{
-				setTimeout(refreshFunc, i * 100);
-				setTimeout(refreshFunc, i * 1000);
-			}
 			return;
-		}
-		var wf = document.createElement("link");
-		wf.href = cssurl_;
-		wf.rel = "stylesheet";
-		wf.type = "text/css";
-		wf.onload = refreshFunc;
-		document.getElementsByTagName('head')[0].appendChild(wf);
-		requestedWebFonts[cssurl_] = true;
-		this.facename = "'" + familyname_ + "'";
-		this.updateFont();
-		for (var i = 1; i < 10; i++)
-		{
-			setTimeout(refreshFunc, i * 100);
-			setTimeout(refreshFunc, i * 1000);
-		}
-;
+		this.elem.value = text;
 	};
-	Acts.prototype.SetEffect = function (effect)
+	Acts.prototype.SetPlaceholder = function (text)
 	{
-		this.blend_mode = effect;
-		this.compositeOp = cr.effectToCompositeOp(effect);
-		cr.setGLBlend(this, effect, this.runtime.gl);
-		this.runtime.redraw = true;
+		if (this.runtime.isDomFree)
+			return;
+		this.elem.placeholder = text;
+	};
+	Acts.prototype.SetTooltip = function (text)
+	{
+		if (this.runtime.isDomFree)
+			return;
+		this.elem.title = text;
+	};
+	Acts.prototype.SetVisible = function (vis)
+	{
+		if (this.runtime.isDomFree)
+			return;
+		this.visible = (vis !== 0);
+	};
+	Acts.prototype.SetEnabled = function (en)
+	{
+		if (this.runtime.isDomFree)
+			return;
+		this.elem.disabled = (en === 0);
+	};
+	Acts.prototype.SetReadOnly = function (ro)
+	{
+		if (this.runtime.isDomFree)
+			return;
+		this.elem.readOnly = (ro === 0);
+	};
+	Acts.prototype.SetFocus = function ()
+	{
+		if (this.runtime.isDomFree)
+			return;
+		this.elem.focus();
+	};
+	Acts.prototype.SetBlur = function ()
+	{
+		if (this.runtime.isDomFree)
+			return;
+		this.elem.blur();
+	};
+	Acts.prototype.SetCSSStyle = function (p, v)
+	{
+		if (this.runtime.isDomFree)
+			return;
+		jQuery(this.elem).css(p, v);
+	};
+	Acts.prototype.ScrollToBottom = function ()
+	{
+		if (this.runtime.isDomFree)
+			return;
+		this.elem.scrollTop = this.elem.scrollHeight;
 	};
 	pluginProto.acts = new Acts();
 	function Exps() {};
-	Exps.prototype.Text = function(ret)
+	Exps.prototype.Text = function (ret)
 	{
-		ret.set_string(this.text);
-	};
-	Exps.prototype.FaceName = function (ret)
-	{
-		ret.set_string(this.facename);
-	};
-	Exps.prototype.FaceSize = function (ret)
-	{
-		ret.set_int(this.ptSize);
-	};
-	Exps.prototype.TextWidth = function (ret)
-	{
-		var w = 0;
-		var i, len, x;
-		for (i = 0, len = this.lines.length; i < len; i++)
+		if (this.runtime.isDomFree)
 		{
-			x = this.lines[i].width;
-			if (w < x)
-				w = x;
+			ret.set_string("");
+			return;
 		}
-		ret.set_int(w);
-	};
-	Exps.prototype.TextHeight = function (ret)
-	{
-		ret.set_int(this.lines.length * (this.pxHeight + this.line_height_offset) - this.line_height_offset);
+		ret.set_string(this.elem.value);
 	};
 	pluginProto.exps = new Exps();
 }());
@@ -28285,6 +29873,368 @@ cr.plugins_.rex_TouchWrap = function(runtime)
     {
         return this.cursor.y;
     };
+}());
+;
+;
+cr.behaviors.Fade = function(runtime)
+{
+	this.runtime = runtime;
+};
+(function ()
+{
+	var behaviorProto = cr.behaviors.Fade.prototype;
+	behaviorProto.Type = function(behavior, objtype)
+	{
+		this.behavior = behavior;
+		this.objtype = objtype;
+		this.runtime = behavior.runtime;
+	};
+	var behtypeProto = behaviorProto.Type.prototype;
+	behtypeProto.onCreate = function()
+	{
+	};
+	behaviorProto.Instance = function(type, inst)
+	{
+		this.type = type;
+		this.behavior = type.behavior;
+		this.inst = inst;				// associated object instance to modify
+		this.runtime = type.runtime;
+	};
+	var behinstProto = behaviorProto.Instance.prototype;
+	behinstProto.onCreate = function()
+	{
+		this.activeAtStart = this.properties[0] === 1;
+		this.setMaxOpacity = false;					// used to retrieve maxOpacity once in first 'Start fade' action if initially inactive
+		this.fadeInTime = this.properties[1];
+		this.waitTime = this.properties[2];
+		this.fadeOutTime = this.properties[3];
+		this.destroy = this.properties[4];			// 0 = no, 1 = after fade out
+		this.stage = this.activeAtStart ? 0 : 3;		// 0 = fade in, 1 = wait, 2 = fade out, 3 = done
+		if (this.recycled)
+			this.stageTime.reset();
+		else
+			this.stageTime = new cr.KahanAdder();
+		this.maxOpacity = (this.inst.opacity ? this.inst.opacity : 1.0);
+		if (this.activeAtStart)
+		{
+			if (this.fadeInTime === 0)
+			{
+				this.stage = 1;
+				if (this.waitTime === 0)
+					this.stage = 2;
+			}
+			else
+			{
+				this.inst.opacity = 0;
+				this.runtime.redraw = true;
+			}
+		}
+	};
+	behinstProto.saveToJSON = function ()
+	{
+		return {
+			"fit": this.fadeInTime,
+			"wt": this.waitTime,
+			"fot": this.fadeOutTime,
+			"s": this.stage,
+			"st": this.stageTime.sum,
+			"mo": this.maxOpacity,
+		};
+	};
+	behinstProto.loadFromJSON = function (o)
+	{
+		this.fadeInTime = o["fit"];
+		this.waitTime = o["wt"];
+		this.fadeOutTime = o["fot"];
+		this.stage = o["s"];
+		this.stageTime.reset();
+		this.stageTime.sum = o["st"];
+		this.maxOpacity = o["mo"];
+	};
+	behinstProto.tick = function ()
+	{
+		this.stageTime.add(this.runtime.getDt(this.inst));
+		if (this.stage === 0)
+		{
+			this.inst.opacity = (this.stageTime.sum / this.fadeInTime) * this.maxOpacity;
+			this.runtime.redraw = true;
+			if (this.inst.opacity >= this.maxOpacity)
+			{
+				this.inst.opacity = this.maxOpacity;
+				this.stage = 1;	// wait stage
+				this.stageTime.reset();
+				this.runtime.trigger(cr.behaviors.Fade.prototype.cnds.OnFadeInEnd, this.inst);
+			}
+		}
+		if (this.stage === 1)
+		{
+			if (this.stageTime.sum >= this.waitTime)
+			{
+				this.stage = 2;	// fade out stage
+				this.stageTime.reset();
+				this.runtime.trigger(cr.behaviors.Fade.prototype.cnds.OnWaitEnd, this.inst);
+			}
+		}
+		if (this.stage === 2)
+		{
+			if (this.fadeOutTime !== 0)
+			{
+				this.inst.opacity = this.maxOpacity - ((this.stageTime.sum / this.fadeOutTime) * this.maxOpacity);
+				this.runtime.redraw = true;
+				if (this.inst.opacity < 0)
+				{
+					this.inst.opacity = 0;
+					this.stage = 3;	// done
+					this.stageTime.reset();
+					this.runtime.trigger(cr.behaviors.Fade.prototype.cnds.OnFadeOutEnd, this.inst);
+					if (this.destroy === 1)
+						this.runtime.DestroyInstance(this.inst);
+				}
+			}
+		}
+	};
+	behinstProto.doStart = function ()
+	{
+		this.stage = 0;
+		this.stageTime.reset();
+		if (this.fadeInTime === 0)
+		{
+			this.stage = 1;
+			if (this.waitTime === 0)
+				this.stage = 2;
+		}
+		else
+		{
+			this.inst.opacity = 0;
+			this.runtime.redraw = true;
+		}
+	};
+	function Cnds() {};
+	Cnds.prototype.OnFadeOutEnd = function ()
+	{
+		return true;
+	};
+	Cnds.prototype.OnFadeInEnd = function ()
+	{
+		return true;
+	};
+	Cnds.prototype.OnWaitEnd = function ()
+	{
+		return true;
+	};
+	behaviorProto.cnds = new Cnds();
+	function Acts() {};
+	Acts.prototype.StartFade = function ()
+	{
+		if (!this.activeAtStart && !this.setMaxOpacity)
+		{
+			this.maxOpacity = (this.inst.opacity ? this.inst.opacity : 1.0);
+			this.setMaxOpacity = true;
+		}
+		if (this.stage === 3)
+			this.doStart();
+	};
+	Acts.prototype.RestartFade = function ()
+	{
+		this.doStart();
+	};
+	Acts.prototype.SetFadeInTime = function (t)
+	{
+		if (t < 0)
+			t = 0;
+		this.fadeInTime = t;
+	};
+	Acts.prototype.SetWaitTime = function (t)
+	{
+		if (t < 0)
+			t = 0;
+		this.waitTime = t;
+	};
+	Acts.prototype.SetFadeOutTime = function (t)
+	{
+		if (t < 0)
+			t = 0;
+		this.fadeOutTime = t;
+	};
+	behaviorProto.acts = new Acts();
+	function Exps() {};
+	Exps.prototype.FadeInTime = function (ret)
+	{
+		ret.set_float(this.fadeInTime);
+	};
+	Exps.prototype.WaitTime = function (ret)
+	{
+		ret.set_float(this.waitTime);
+	};
+	Exps.prototype.FadeOutTime = function (ret)
+	{
+		ret.set_float(this.fadeOutTime);
+	};
+	behaviorProto.exps = new Exps();
+}());
+;
+;
+cr.behaviors.Pin = function(runtime)
+{
+	this.runtime = runtime;
+};
+(function ()
+{
+	var behaviorProto = cr.behaviors.Pin.prototype;
+	behaviorProto.Type = function(behavior, objtype)
+	{
+		this.behavior = behavior;
+		this.objtype = objtype;
+		this.runtime = behavior.runtime;
+	};
+	var behtypeProto = behaviorProto.Type.prototype;
+	behtypeProto.onCreate = function()
+	{
+	};
+	behaviorProto.Instance = function(type, inst)
+	{
+		this.type = type;
+		this.behavior = type.behavior;
+		this.inst = inst;				// associated object instance to modify
+		this.runtime = type.runtime;
+	};
+	var behinstProto = behaviorProto.Instance.prototype;
+	behinstProto.onCreate = function()
+	{
+		this.pinObject = null;
+		this.pinObjectUid = -1;		// for loading
+		this.pinAngle = 0;
+		this.pinDist = 0;
+		this.myStartAngle = 0;
+		this.theirStartAngle = 0;
+		this.lastKnownAngle = 0;
+		this.mode = 0;				// 0 = position & angle; 1 = position; 2 = angle; 3 = rope; 4 = bar
+		var self = this;
+		if (!this.recycled)
+		{
+			this.myDestroyCallback = (function(inst) {
+													self.onInstanceDestroyed(inst);
+												});
+		}
+		this.runtime.addDestroyCallback(this.myDestroyCallback);
+	};
+	behinstProto.saveToJSON = function ()
+	{
+		return {
+			"uid": this.pinObject ? this.pinObject.uid : -1,
+			"pa": this.pinAngle,
+			"pd": this.pinDist,
+			"msa": this.myStartAngle,
+			"tsa": this.theirStartAngle,
+			"lka": this.lastKnownAngle,
+			"m": this.mode
+		};
+	};
+	behinstProto.loadFromJSON = function (o)
+	{
+		this.pinObjectUid = o["uid"];		// wait until afterLoad to look up
+		this.pinAngle = o["pa"];
+		this.pinDist = o["pd"];
+		this.myStartAngle = o["msa"];
+		this.theirStartAngle = o["tsa"];
+		this.lastKnownAngle = o["lka"];
+		this.mode = o["m"];
+	};
+	behinstProto.afterLoad = function ()
+	{
+		if (this.pinObjectUid === -1)
+			this.pinObject = null;
+		else
+		{
+			this.pinObject = this.runtime.getObjectByUID(this.pinObjectUid);
+;
+		}
+		this.pinObjectUid = -1;
+	};
+	behinstProto.onInstanceDestroyed = function (inst)
+	{
+		if (this.pinObject == inst)
+			this.pinObject = null;
+	};
+	behinstProto.onDestroy = function()
+	{
+		this.pinObject = null;
+		this.runtime.removeDestroyCallback(this.myDestroyCallback);
+	};
+	behinstProto.tick = function ()
+	{
+	};
+	behinstProto.tick2 = function ()
+	{
+		if (!this.pinObject)
+			return;
+		if (this.lastKnownAngle !== this.inst.angle)
+			this.myStartAngle = cr.clamp_angle(this.myStartAngle + (this.inst.angle - this.lastKnownAngle));
+		var newx = this.inst.x;
+		var newy = this.inst.y;
+		if (this.mode === 3 || this.mode === 4)		// rope mode or bar mode
+		{
+			var dist = cr.distanceTo(this.inst.x, this.inst.y, this.pinObject.x, this.pinObject.y);
+			if ((dist > this.pinDist) || (this.mode === 4 && dist < this.pinDist))
+			{
+				var a = cr.angleTo(this.pinObject.x, this.pinObject.y, this.inst.x, this.inst.y);
+				newx = this.pinObject.x + Math.cos(a) * this.pinDist;
+				newy = this.pinObject.y + Math.sin(a) * this.pinDist;
+			}
+		}
+		else
+		{
+			newx = this.pinObject.x + Math.cos(this.pinObject.angle + this.pinAngle) * this.pinDist;
+			newy = this.pinObject.y + Math.sin(this.pinObject.angle + this.pinAngle) * this.pinDist;
+		}
+		var newangle = cr.clamp_angle(this.myStartAngle + (this.pinObject.angle - this.theirStartAngle));
+		this.lastKnownAngle = newangle;
+		if ((this.mode === 0 || this.mode === 1 || this.mode === 3 || this.mode === 4)
+			&& (this.inst.x !== newx || this.inst.y !== newy))
+		{
+			this.inst.x = newx;
+			this.inst.y = newy;
+			this.inst.set_bbox_changed();
+		}
+		if ((this.mode === 0 || this.mode === 2) && (this.inst.angle !== newangle))
+		{
+			this.inst.angle = newangle;
+			this.inst.set_bbox_changed();
+		}
+	};
+	function Cnds() {};
+	Cnds.prototype.IsPinned = function ()
+	{
+		return !!this.pinObject;
+	};
+	behaviorProto.cnds = new Cnds();
+	function Acts() {};
+	Acts.prototype.Pin = function (obj, mode_)
+	{
+		if (!obj)
+			return;
+		var otherinst = obj.getFirstPicked(this.inst);
+		if (!otherinst)
+			return;
+		this.pinObject = otherinst;
+		this.pinAngle = cr.angleTo(otherinst.x, otherinst.y, this.inst.x, this.inst.y) - otherinst.angle;
+		this.pinDist = cr.distanceTo(otherinst.x, otherinst.y, this.inst.x, this.inst.y);
+		this.myStartAngle = this.inst.angle;
+		this.lastKnownAngle = this.inst.angle;
+		this.theirStartAngle = otherinst.angle;
+		this.mode = mode_;
+	};
+	Acts.prototype.Unpin = function ()
+	{
+		this.pinObject = null;
+	};
+	behaviorProto.acts = new Acts();
+	function Exps() {};
+	Exps.prototype.PinnedUID = function (ret)
+	{
+		ret.set_int(this.pinObject ? this.pinObject.uid : -1);
+	};
+	behaviorProto.exps = new Exps();
 }());
 ;
 ;
@@ -32471,26 +34421,29 @@ cr.getObjectRefTable = function () { return [
 	cr.plugins_.AJAX,
 	cr.plugins_.Browser,
 	cr.plugins_.Function,
-	cr.plugins_.Rex_canvas,
+	cr.plugins_.Rex_Date,
+	cr.plugins_.Rex_CSV,
 	cr.plugins_.Rex_Comment,
 	cr.plugins_.Rex_Container,
+	cr.plugins_.Rex_canvas,
 	cr.plugins_.Rex_fnCallPkg,
-	cr.plugins_.Rex_JSONBuider,
-	cr.plugins_.Rex_jsshell,
 	cr.plugins_.Rex_GridCtrl,
 	cr.plugins_.Rex_Hash,
+	cr.plugins_.Rex_jsshell,
+	cr.plugins_.Rex_JSONBuider,
 	cr.plugins_.Rex_Nickname,
 	cr.plugins_.Rex_SysExt,
-	cr.plugins_.Rex_taffydb,
 	cr.plugins_.rex_TagText,
+	cr.plugins_.Rex_taffydb,
 	cr.plugins_.Rex_Random,
 	cr.plugins_.Rex_PatternGen,
+	cr.plugins_.Rex_TimeLine,
 	cr.plugins_.Rex_TimeAway,
 	cr.plugins_.rex_TouchWrap,
 	cr.plugins_.Rex_WaitEvent,
 	cr.plugins_.Rex_WebstorageExt,
 	cr.plugins_.Sprite,
-	cr.plugins_.Text,
+	cr.plugins_.TextBox,
 	cr.plugins_.WebStorage,
 	cr.behaviors.scrollto,
 	cr.behaviors.Rex_boundary,
@@ -32501,65 +34454,92 @@ cr.getObjectRefTable = function () { return [
 	cr.behaviors.Rex_Slowdown,
 	cr.behaviors.Rex_TouchArea2,
 	cr.behaviors.Rex_DragDrop2,
+	cr.behaviors.Fade,
+	cr.behaviors.Pin,
 	cr.behaviors.Rex_Button2,
 	cr.behaviors.Rex_bNickname,
 	cr.system_object.prototype.cnds.OnLayoutStart,
 	cr.system_object.prototype.acts.SetVar,
-	cr.plugins_.Function.prototype.acts.CallFunction,
+	cr.plugins_.Sprite.prototype.acts.SetSize,
 	cr.system_object.prototype.exps.viewportright,
 	cr.system_object.prototype.exps.viewportleft,
+	cr.system_object.prototype.exps.viewportbottom,
+	cr.system_object.prototype.exps.viewporttop,
+	cr.plugins_.Function.prototype.acts.CallFunction,
+	cr.system_object.prototype.cnds.Compare,
+	cr.system_object.prototype.exps["int"],
+	cr.plugins_.Rex_WebstorageExt.prototype.exps.LocalValue,
+	cr.system_object.prototype.acts.SetLayerVisible,
+	cr.plugins_.Browser.prototype.acts.ConsoleLog,
+	cr.system_object.prototype.cnds.Else,
+	cr.plugins_.Function.prototype.cnds.OnFunction,
+	cr.plugins_.WebStorage.prototype.acts.StoreLocal,
+	cr.plugins_.Function.prototype.exps.Param,
+	cr.behaviors.Rex_Button2.prototype.cnds.OnClick,
+	cr.plugins_.Sprite.prototype.cnds.CompareInstanceVar,
 	cr.plugins_.Rex_taffydb.prototype.acts.NewFilters,
+	cr.plugins_.Rex_taffydb.prototype.exps.AllRowsCount,
 	cr.plugins_.Rex_taffydb.prototype.acts.AddValueComparsion,
-	cr.system_object.prototype.exps.str,
 	cr.plugins_.Rex_taffydb.prototype.cnds.ForEachRow,
 	cr.plugins_.Rex_taffydb.prototype.exps.CurRowContent,
-	cr.system_object.prototype.exps["float"],
-	cr.system_object.prototype.cnds.Compare,
-	cr.plugins_.rex_TagText.prototype.acts.SetText,
-	cr.plugins_.Function.prototype.cnds.OnFunction,
-	cr.system_object.prototype.cnds.ForEach,
-	cr.plugins_.Sprite.prototype.cnds.CompareInstanceVar,
+	cr.plugins_.Sprite.prototype.acts.SetVisible,
+	cr.system_object.prototype.cnds.IsGroupActive,
+	cr.plugins_.Rex_TimeLine.prototype.acts.CreateTimer,
+	cr.system_object.prototype.cnds.EveryTick,
+	cr.system_object.prototype.acts.AddVar,
+	cr.system_object.prototype.exps.abs,
+	cr.plugins_.rex_TouchWrap.prototype.exps.AccelerationX,
+	cr.plugins_.rex_TouchWrap.prototype.exps.AccelerationY,
+	cr.plugins_.rex_TouchWrap.prototype.exps.AccelerationZ,
 	cr.system_object.prototype.cnds.CompareVar,
+	cr.plugins_.Rex_TimeLine.prototype.cnds.IsRunning,
+	cr.plugins_.Rex_TimeLine.prototype.acts.StartTimer,
+	cr.plugins_.Rex_TimeLine.prototype.acts.StopTimer,
+	cr.system_object.prototype.exps.str,
+	cr.system_object.prototype.exps["float"],
+	cr.plugins_.rex_TagText.prototype.acts.SetText,
+	cr.system_object.prototype.cnds.ForEach,
 	cr.plugins_.Rex_fnCallPkg.prototype.acts.CleanFnQueue,
 	cr.plugins_.Rex_fnCallPkg.prototype.acts.PushToFnQueue2,
 	cr.plugins_.Sprite.prototype.acts.SetInstanceVar,
 	cr.plugins_.Rex_fnCallPkg.prototype.exps.FnQueuePkg,
 	cr.plugins_.Sprite.prototype.acts.SetAnim,
-	cr.system_object.prototype.cnds.Else,
 	cr.plugins_.Rex_Container.prototype.cnds.PickByUID,
-	cr.system_object.prototype.exps["int"],
-	cr.plugins_.Function.prototype.exps.Param,
-	cr.plugins_.Rex_Nickname.prototype.acts.CreateInst,
-	cr.plugins_.Rex_Container.prototype.exps.X,
-	cr.plugins_.Rex_Container.prototype.exps.Y,
-	cr.plugins_.Rex_Container.prototype.exps.LayerName,
-	cr.plugins_.Sprite.prototype.acts.SetScale,
-	cr.plugins_.Sprite.prototype.acts.SetAnimFrame,
-	cr.plugins_.Rex_Container.prototype.acts.AddInsts,
 	cr.plugins_.Sprite.prototype.acts.MoveToTop,
-	cr.plugins_.Browser.prototype.acts.ConsoleLog,
-	cr.behaviors.Rex_Button2.prototype.cnds.OnClick,
-	cr.behaviors.Rex_TouchArea2.prototype.exps.Distance,
-	cr.plugins_.Rex_fnCallPkg.prototype.acts.CallFunction,
-	cr.behaviors.Rex_Button2.prototype.cnds.OnRollingIn,
-	cr.behaviors.Rex_Button2.prototype.cnds.OnRollingOut,
-	cr.plugins_.WebStorage.prototype.acts.StoreLocal,
 	cr.plugins_.Rex_taffydb.prototype.exps.AllRowsAsJSON,
-	cr.plugins_.Rex_PatternGen.prototype.exps.AsJSON,
+	cr.plugins_.Function.prototype.acts.SetReturnValue,
+	cr.plugins_.Rex_Date.prototype.exps.Day,
 	cr.system_object.prototype.acts.GoToLayoutByName,
-	cr.system_object.prototype.acts.GoToLayout,
+	cr.system_object.prototype.cnds.IsOnPlatform,
+	cr.plugins_.Browser.prototype.acts.GoToURLWindow,
+	cr.behaviors.Rex_TouchArea2.prototype.cnds.OnTouchMoving,
+	cr.behaviors.Rex_TouchArea2.prototype.exps.DeltaX,
+	cr.behaviors.Rex_TouchArea2.prototype.exps.DeltaY,
+	cr.behaviors.Rex_TouchArea2.prototype.cnds.OnTouchEnd,
 	cr.system_object.prototype.exps.floor,
-	cr.plugins_.Rex_WebstorageExt.prototype.exps.LocalValue,
 	cr.plugins_.Rex_taffydb.prototype.acts.SetRowID,
 	cr.plugins_.Rex_taffydb.prototype.exps.CurRowID,
 	cr.plugins_.Rex_taffydb.prototype.acts.SetValue,
 	cr.plugins_.Rex_taffydb.prototype.acts.Save,
 	cr.system_object.prototype.cnds.For,
 	cr.system_object.prototype.exps.loopindex,
+	cr.plugins_.Rex_Comment.prototype.acts.NOOP,
 	cr.plugins_.WebStorage.prototype.acts.ClearLocal,
 	cr.plugins_.Rex_taffydb.prototype.acts.RemoveAll,
-	cr.system_object.prototype.cnds.IsGroupActive,
-	cr.system_object.prototype.exps.projectversion,
+	cr.plugins_.Rex_GridCtrl.prototype.acts.RefreshVisibleCells,
+	cr.plugins_.Rex_taffydb.prototype.exps.Index2QueriedRowContent,
+	cr.plugins_.rex_TouchWrap.prototype.cnds.OnTapGestureObject,
+	cr.plugins_.TextBox.prototype.acts.SetText,
+	cr.plugins_.TextBox.prototype.exps.Text,
+	cr.system_object.prototype.exps.newline,
+	cr.system_object.prototype.cnds.LayerVisible,
+	cr.behaviors.Rex_TouchArea2.prototype.exps.Distance,
+	cr.plugins_.Rex_fnCallPkg.prototype.acts.CallFunction,
+	cr.behaviors.Rex_Button2.prototype.cnds.OnRollingIn,
+	cr.plugins_.Sprite.prototype.acts.SetOpacity,
+	cr.behaviors.Rex_Button2.prototype.cnds.OnRollingOut,
+	cr.behaviors.rex_lunarray_Tween_mod.prototype.acts.SetParameter,
+	cr.behaviors.rex_lunarray_Tween_mod.prototype.acts.Force,
 	cr.plugins_.Rex_taffydb.prototype.exps.QueriedRowsCount,
 	cr.system_object.prototype.exps.layoutname,
 	cr.system_object.prototype.exps.max,
@@ -32567,41 +34547,39 @@ cr.getObjectRefTable = function () { return [
 	cr.system_object.prototype.exps.ceil,
 	cr.system_object.prototype.exps.random,
 	cr.plugins_.Rex_taffydb.prototype.exps.QueriedRowsAsJSON,
-	cr.plugins_.Rex_Comment.prototype.acts.NOOP,
-	cr.plugins_.Rex_PatternGen.prototype.acts.Generate,
-	cr.plugins_.Rex_PatternGen.prototype.exps.LastPattern,
-	cr.system_object.prototype.cnds.Every,
-	cr.plugins_.Rex_TimeAway.prototype.exps.ElapsedTime,
-	cr.plugins_.Rex_TimeAway.prototype.acts.StartTimer,
-	cr.behaviors.Rex_Button2.prototype.acts.GotoACTIVE,
-	cr.plugins_.Sprite.prototype.acts.SetVisible,
-	cr.behaviors.Rex_Button2.prototype.acts.GotoINACTIVE,
-	cr.plugins_.Function.prototype.acts.SetReturnValue,
+	cr.system_object.prototype.acts.GoToLayout,
+	cr.plugins_.Rex_taffydb.prototype.exps.ID2RowContent,
+	cr.plugins_.Rex_Hash.prototype.acts.StringToHashTable,
+	cr.plugins_.Rex_Hash.prototype.exps.At,
+	cr.plugins_.Rex_Hash.prototype.cnds.ForEachItem,
+	cr.plugins_.Rex_Hash.prototype.exps.CurKey,
+	cr.plugins_.Rex_Hash.prototype.exps.CurValue,
+	cr.plugins_.Rex_jsshell.prototype.cnds.OnCallback,
+	cr.plugins_.Rex_jsshell.prototype.exps.Param,
+	cr.plugins_.Rex_Hash.prototype.exps.RandomKeyAt,
+	cr.system_object.prototype.cnds.IsMobile,
+	cr.plugins_.WebStorage.prototype.cnds.LocalStorageExists,
+	cr.plugins_.WebStorage.prototype.exps.LocalValue,
 	cr.plugins_.Rex_jsshell.prototype.exps.Prop,
 	cr.plugins_.Rex_jsshell.prototype.acts.SetFunctionName,
 	cr.plugins_.Rex_jsshell.prototype.acts.AddValue,
 	cr.plugins_.Rex_jsshell.prototype.acts.AddCallback,
 	cr.plugins_.Rex_jsshell.prototype.acts.InvokeFunction,
-	cr.plugins_.Rex_jsshell.prototype.cnds.OnCallback,
+	cr.plugins_.Function.prototype.cnds.CompareParam,
 	cr.plugins_.Rex_Hash.prototype.acts.CleanAll,
 	cr.plugins_.Rex_Hash.prototype.acts.InsertValue,
-	cr.plugins_.Text.prototype.acts.SetText,
 	cr.plugins_.Rex_Hash.prototype.exps.AtKeys,
 	cr.plugins_.Rex_jsshell.prototype.acts.AddJSON,
-	cr.plugins_.Rex_jsshell.prototype.exps.Param,
-	cr.plugins_.Text.prototype.acts.AppendText,
+	cr.plugins_.Sprite.prototype.acts.SetAnimFrame,
 	cr.plugins_.Sprite.prototype.acts.Destroy,
 	cr.plugins_.Rex_taffydb.prototype.acts.RemoveByRowID,
+	cr.plugins_.Function.prototype.exps.Call,
 	cr.plugins_.Rex_JSONBuider.prototype.acts.Clean,
 	cr.plugins_.Rex_JSONBuider.prototype.cnds.SetRoot,
 	cr.plugins_.Rex_JSONBuider.prototype.acts.AddValue,
 	cr.plugins_.Rex_JSONBuider.prototype.exps.AsJSON,
-	cr.plugins_.Rex_Hash.prototype.acts.StringToHashTable,
-	cr.plugins_.Rex_Hash.prototype.exps.At,
-	cr.system_object.prototype.exps.newline,
 	cr.plugins_.Rex_JSONBuider.prototype.acts.AddBooleanValue,
 	cr.plugins_.Rex_Hash.prototype.exps.AsJSON,
-	cr.plugins_.Function.prototype.exps.Call,
 	cr.plugins_.Browser.prototype.acts.ExecJs,
 	cr.plugins_.Rex_jsshell.prototype.acts.AddObject,
 	cr.system_object.prototype.acts.SnapshotCanvas,
@@ -32611,24 +34589,23 @@ cr.getObjectRefTable = function () { return [
 	cr.plugins_.Browser.prototype.cnds.OnBackButton,
 	cr.system_object.prototype.exps.time,
 	cr.plugins_.Browser.prototype.acts.Close,
-	cr.behaviors.Rex_TouchArea2.prototype.cnds.OnTouchMoving,
-	cr.system_object.prototype.acts.AddVar,
-	cr.system_object.prototype.exps.abs,
-	cr.behaviors.Rex_TouchArea2.prototype.exps.DeltaX,
-	cr.behaviors.Rex_TouchArea2.prototype.exps.DeltaY,
-	cr.behaviors.Rex_TouchArea2.prototype.cnds.OnTouchEnd,
+	cr.system_object.prototype.cnds.Every,
+	cr.plugins_.Rex_TimeAway.prototype.exps.ElapsedTime,
+	cr.plugins_.Rex_TimeAway.prototype.acts.StartTimer,
+	cr.behaviors.Rex_Button2.prototype.acts.GotoACTIVE,
+	cr.behaviors.Rex_Button2.prototype.acts.GotoINACTIVE,
 	cr.plugins_.rex_TouchWrap.prototype.cnds.OnTouchEnd,
 	cr.plugins_.Sprite.prototype.exps.AnimationFrame,
 	cr.plugins_.Sprite.prototype.exps.AnimationFrameCount,
-	cr.plugins_.Rex_taffydb.prototype.exps.AllRowsCount,
 	cr.plugins_.Sprite.prototype.exps.AnimationName,
 	cr.system_object.prototype.acts.CreateObject,
+	cr.plugins_.Rex_Container.prototype.exps.LayerName,
+	cr.plugins_.Rex_Container.prototype.exps.X,
+	cr.plugins_.Rex_Container.prototype.exps.Y,
 	cr.plugins_.Sprite.prototype.exps.ImagePointX,
 	cr.plugins_.Sprite.prototype.exps.ImagePointY,
 	cr.plugins_.rex_TagText.prototype.acts.SetInstanceVar,
-	cr.plugins_.Rex_taffydb.prototype.exps.Index2QueriedRowContent,
-	cr.plugins_.Sprite.prototype.acts.SetOpacity,
-	cr.plugins_.rex_TagText.prototype.acts.SetOpacity,
+	cr.plugins_.Rex_Container.prototype.acts.AddInsts,
 	cr.plugins_.Sprite.prototype.exps.LayerName,
 	cr.plugins_.Sprite.prototype.exps.Y,
 	cr.plugins_.Sprite.prototype.acts.SetHeight,
@@ -32649,7 +34626,6 @@ cr.getObjectRefTable = function () { return [
 	cr.behaviors.Rex_Slowdown.prototype.acts.Start,
 	cr.behaviors.Rex_SpeedMoinitor.prototype.exps.Speed,
 	cr.behaviors.Rex_SpeedMoinitor.prototype.exps.Angle,
-	cr.system_object.prototype.cnds.EveryTick,
 	cr.plugins_.Rex_GridCtrl.prototype.cnds.IsOYOutOfBound,
 	cr.plugins_.rex_TouchWrap.prototype.cnds.IsInTouch,
 	cr.plugins_.Rex_GridCtrl.prototype.exps.UID,
@@ -32657,17 +34633,18 @@ cr.getObjectRefTable = function () { return [
 	cr.plugins_.Rex_GridCtrl.prototype.exps.Width,
 	cr.plugins_.Rex_GridCtrl.prototype.exps.ListHeight,
 	cr.behaviors.Rex_TouchArea2.prototype.acts.SetEnabled,
-	cr.plugins_.Sprite.prototype.acts.SetSize,
 	cr.plugins_.Sprite.prototype.exps.X,
 	cr.plugins_.Sprite.prototype.exps.BBoxTop,
 	cr.plugins_.Rex_GridCtrl.prototype.acts.SetColumnNumber,
 	cr.plugins_.Rex_GridCtrl.prototype.acts.SetDefaultCellWidth,
 	cr.plugins_.Rex_GridCtrl.prototype.acts.SetDefaultCellHeight,
 	cr.plugins_.Rex_GridCtrl.prototype.acts.SetHeight,
+	cr.plugins_.Rex_GridCtrl.prototype.acts.SetWidth,
+	cr.plugins_.Sprite.prototype.exps.Width,
 	cr.plugins_.Rex_GridCtrl.prototype.acts.SetInstanceVar,
 	cr.plugins_.Rex_GridCtrl.prototype.acts.SetCellsCount,
-	cr.plugins_.Rex_GridCtrl.prototype.acts.RefreshVisibleCells,
 	cr.plugins_.Rex_GridCtrl.prototype.cnds.OnCellVisible,
+	cr.plugins_.Rex_Nickname.prototype.acts.CreateInst,
 	cr.plugins_.Rex_GridCtrl.prototype.exps.CellTLX,
 	cr.plugins_.Rex_GridCtrl.prototype.exps.CellTLY,
 	cr.plugins_.Rex_GridCtrl.prototype.exps.LayerName,
@@ -32680,21 +34657,24 @@ cr.getObjectRefTable = function () { return [
 	cr.plugins_.Rex_GridCtrl.prototype.cnds.OnCellInvisible,
 	cr.plugins_.Rex_Container.prototype.cnds.CompareInstanceVar,
 	cr.plugins_.Rex_Container.prototype.acts.Destroy,
+	cr.plugins_.Rex_taffydb.prototype.acts.AddOrder,
 	cr.plugins_.Rex_taffydb.prototype.exps.Index2QueriedRowID,
-	cr.plugins_.WebStorage.prototype.cnds.LocalStorageExists,
-	cr.plugins_.WebStorage.prototype.exps.LocalValue,
+	cr.system_object.prototype.exps.projectversion,
 	cr.plugins_.Rex_taffydb.prototype.acts.InsertJSON,
-	cr.plugins_.Rex_PatternGen.prototype.acts.JSONLoad,
-	cr.plugins_.Rex_PatternGen.prototype.acts.SetRandomGenerator,
-	cr.plugins_.Rex_PatternGen.prototype.acts.SetPattern,
-	cr.plugins_.Rex_PatternGen.prototype.acts.StartGenerator,
 	cr.plugins_.Rex_WaitEvent.prototype.acts.WaitEvent,
 	cr.plugins_.AJAX.prototype.acts.RequestFile,
 	cr.plugins_.AJAX.prototype.cnds.OnComplete,
-	cr.plugins_.Rex_WaitEvent.prototype.acts.EventFinished,
 	cr.plugins_.Rex_taffydb.prototype.acts.InsertCSV,
 	cr.plugins_.AJAX.prototype.exps.LastData,
+	cr.plugins_.Rex_WaitEvent.prototype.acts.EventFinished,
 	cr.system_object.prototype.cnds.OnLoadFinished,
 	cr.plugins_.Rex_WaitEvent.prototype.cnds.OnAllEventsFinished,
-	cr.plugins_.Rex_Nickname.prototype.acts.AssignNickname
+	cr.plugins_.Rex_Nickname.prototype.acts.AssignNickname,
+	cr.plugins_.Rex_CSV.prototype.acts.TurnPage,
+	cr.plugins_.Rex_CSV.prototype.acts.StringToPage,
+	cr.plugins_.Rex_CSV.prototype.exps.TableToCSV,
+	cr.plugins_.Rex_jsshell.prototype.acts.LoadAPI,
+	cr.plugins_.Rex_jsshell.prototype.acts.SetProp,
+	cr.system_object.prototype.acts.SetGroupActive,
+	cr.plugins_.rex_TagText.prototype.acts.SetOpacity
 ];};
