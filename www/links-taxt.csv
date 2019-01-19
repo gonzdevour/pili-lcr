@@ -56,7 +56,7 @@ index,id,dataid,roomname,subtitle,roomid,title,saved,s1,s2,link
 36,86,86,懸空棋盤,懸空棋盤,b10,懸空棋盤,N,Y,N,https://pililcr.weebly.com/tp86.html
 37,87,87,天蝶盟,天蝶盟,b6,天蝶盟,N,Y,N,https://pililcr.weebly.com/tp87.html
 38,88,88,三十年經典,三十年經典,b4,30年經典,N,Y,Y,https://pililcr.weebly.com/tp88.html
-39,89,89,霹靂歷史,霹靂歷史,b2,霹靂歷史,N,Y,N,https://pililcr.weebly.com/tp89.html
+39,89,238,霹靂歷史,霹靂歷史,b2,霹靂歷史,N,Y,N,https://pililcr.weebly.com/tp238.html
 41,90,90,魔吞十二宮入口牆,魔吞十二宮,b11,魔吞12宮,N,Y,Y,https://pililcr.weebly.com/tp90.html
 42,91,91,魔吞十二宮,設計師-吳日云,b11,設計師,N,Y,Y,https://pililcr.weebly.com/tp91.html
 43,92,92,魔吞十二宮,設計師-甫月,b11,設計師,N,Y,Y,https://pililcr.weebly.com/tp92.html
@@ -66,8 +66,8 @@ index,id,dataid,roomname,subtitle,roomid,title,saved,s1,s2,link
 47,96,96,魔吞十二宮,設計師-陳科維,b11,設計師,N,Y,Y,https://pililcr.weebly.com/tp96.html
 48,97,97,魔吞十二宮,設計師-簡國彥,b11,設計師,N,Y,Y,https://pililcr.weebly.com/tp97.html
 49,98,98,魔吞十二宮,設計師-李令言,b11,設計師,N,Y,Y,https://pililcr.weebly.com/tp98.html
-120,99,99,刀說異數,刀說異數,b12,劇集介紹,N,N,N,https://pililcr.weebly.com/tp99.html
-121,100,100,東離劍遊紀,東離劍遊紀,b13,劇集介紹,N,N,N,https://pililcr.weebly.com/tp100.html
+120,99,99,刀說異數,刀說異數,b12,劇集介紹,N,N,Y,https://pililcr.weebly.com/tp99.html
+121,100,100,東離劍遊紀,東離劍遊紀,b13,劇集介紹,N,N,Y,https://pililcr.weebly.com/tp100.html
 50,101,101,琉璃仙境,展偶介紹-素還真(轟掣版),b1,展偶介紹,N,Y,Y,https://pililcr.weebly.com/tp101.html
 51,102,102,琉璃仙境,展偶介紹-葉小釵,b1,展偶介紹,N,Y,Y,https://pililcr.weebly.com/tp102.html
 52,103,103,琉璃仙境,展偶介紹-亂世狂刀,b1,展偶介紹,N,Y,Y,https://pililcr.weebly.com/tp103.html
@@ -111,7 +111,7 @@ index,id,dataid,roomname,subtitle,roomid,title,saved,s1,s2,link
 75,126,126,30年經典,劇集及展偶介紹-仙魔鏖鋒II+寄曇說.一頁書(正派)仙魔版,b4,展偶介紹,N,Y,N,https://pililcr.weebly.com/tp126.html
 76,127,127,名人堂,康延齡老師製作的真人版素還真介紹,b2,真人版素還真,N,Y,Y,https://pililcr.weebly.com/tp127.html
 40,128,128,總說簽名牆,總說介紹,b2,總說,N,Y,Y,https://pililcr.weebly.com/tp128.html
-139,129,129,天宙之間,詹老師書法介紹,b3,書法介紹,N,N,Y,https://pililcr.weebly.com/tp129.html
+139,129,129,名人堂,詹老師書法介紹,b9,名人堂,N,N,Y,https://pililcr.weebly.com/tp129.html
 140,130,130,東離劍遊紀,展偶介紹-凜雪鴉,b13,展偶介紹,N,N,Y,https://pililcr.weebly.com/tp130.html
 141,131,131,東離劍遊紀,展偶介紹-殤不患,b13,展偶介紹,N,N,Y,https://pililcr.weebly.com/tp131.html
 142,132,132,東離劍遊紀,展偶介紹-浪巫謠,b13,展偶介紹,N,N,Y,https://pililcr.weebly.com/tp132.html
