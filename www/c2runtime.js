@@ -34549,6 +34549,7 @@ cr.getObjectRefTable = function () { return [
 	cr.system_object.prototype.acts.GoToLayout,
 	cr.plugins_.Rex_PatternGen.prototype.acts.Generate,
 	cr.plugins_.Rex_PatternGen.prototype.exps.LastPattern,
+	cr.plugins_.Rex_taffydb.prototype.exps.ID2RowContent,
 	cr.plugins_.Rex_Hash.prototype.acts.StringToHashTable,
 	cr.plugins_.Rex_Hash.prototype.exps.At,
 	cr.plugins_.Rex_Hash.prototype.cnds.ForEachItem,
